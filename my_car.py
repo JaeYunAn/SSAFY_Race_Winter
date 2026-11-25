@@ -110,7 +110,9 @@ class Config:
     w_curv: float = 4.0e3               # 곡률² 비용
     w_slope: float = 0.8                # 옆으로 움직이는 비용
     w_cons: float = 0.15                # 지난 계획과 다르면 드는 비용 (좌우 흔들림 방지)
-    plan_hyst: float = 0.3              # 장애물·다른 차가 없을 때 지난번에 고른 칸에서 벗어나는 비용 (칸 뒤집힘 방지). 0 이면 끔
+    plan_hyst: float = 0.0              # 장애물·다른 차가 없을 때 지난번에 고른 칸에서 벗어나는 비용 (칸 뒤집힘 방지). 0 이면 끔
+    #  2026-11-25 0.3 으로 실제 주행: Map 161 칸 뒤집힘 7.0 → 8.4%, 조향 흔들림 0.088 → 0.092 로 효과 없고 Map 61 은 8.4초 느려져 끔
+    plan_anchor: bool = True            # 장애물·다른 차가 없을 때 새 계획을 차의 자세 대신 지난 계획 위에서 시작 (직선 흔들림 방지)
     w_edge: float = 3.0
     w_near: float = 6.0                 # 장애물 근처 비용 (문호준 2단계 위험 비용)
     lat_buffer: float = 0.8             # 0.1초 제어라 추종 오차를 감안해 옆 여유를 넉넉히
@@ -489,6 +491,7 @@ class PathPlanner:
         self.cfg = cfg
         self.prev_abs: List[Tuple[float, float]] = []   # (누적거리, n) 지난 계획
         self.prev_dp_abs: List[Tuple[float, float]] = []   # (누적거리, n) 지난번 격자 DP 가 고른 칸
+        self.anchor_w = 0.0                                  # 계획 시작점을 지난 계획 쪽으로 옮긴 비율 (로그용)
         M = cfg.lanes
         self.M = M
 
@@ -514,7 +517,7 @@ class PathPlanner:
                     out[k].append((m - half_w_car, m + half_w_car))
         return out
 
-    def plan(self, fr: Frame, geo: RoadGeometry, travel: float, t_list: List[float]) -> Plan:
+    def plan(self, fr: Frame, geo: RoadGeometry, travel: float, t_list: List[float], anchor_ok: bool = False) -> Plan:
         c = self.cfg
         K, M, ds = c.plan_stations, self.M, c.plan_ds
         B = max(0.5, fr.half - 0.5 * c.car_width - c.edge_margin)
@@ -568,6 +571,28 @@ class PathPlanner:
         inv = c.w_curv / (ds ** 3)
         n0 = fr.n
         n_m1 = fr.n - ds * math.tan(clamp(fr.psi, -1.2, 1.2))
+        # 계획 시작점 (2026-11-25 Map 161 실측으로 고침): 예전에는 매 프레임 차의 지금 위치·진행 방향에서 출발해서
+        #  차가 오른쪽으로 4° 틀어져 있으면 원래 칸으로 돌아오는 것보다 오른쪽 칸으로 옮기는 쪽이 싸서 계획이 차를 따라감
+        #  (직선에서 계획이 튄 경우의 88~92% 가 그 순간 차가 향한 쪽). 그래서 조향이 바로잡지 못하고, 차가 반대로 휘면
+        #  계획도 반대로 튀어 흔들림을 키움 → 장애물·다른 차가 없고 차가 지난 계획 가까이(옆 1.5 m, 방향 10° 안) 있으면
+        #  지난 계획 위의 점·방향에서 출발 (차를 그 선으로 끌어오는 것은 조향이 함). 멀수록 차의 실제 자세 쪽으로 섞음
+        #  코너(차 앞 50 m 안 곡률 반경 250 m 미만)에서는 하지 않음: 조향 지연으로 바깥으로 밀릴 때 실제 자세에서 다시 계획해야
+        #  속도 계획이 다시 붙는 데 필요한 곡률을 봄 (코너에서도 하면 조향 지연 가짜 차 basic 벌점 7 → 75)
+        self.anchor_w = 0.0
+        near_straight = max(abs(x) for x in kr[:9]) < 0.004
+        if (c.plan_anchor and anchor_ok and near_straight and self.prev_abs
+                and not any(blocks[k] for k in range(1, K + 1))):
+            pa_d = [p[0] for p in self.prev_abs]
+            pa_n = [p[1] for p in self.prev_abs]
+            pn0 = lerp_list(pa_d, pa_n, travel)
+            slope = (lerp_list(pa_d, pa_n, travel + ds) - pn0) / ds
+            dn = abs(fr.n - pn0)
+            dpsi = abs(clamp(fr.psi, -1.2, 1.2) - math.atan(slope))
+            w = clamp((1.5 - dn) / 1.0, 0.0, 1.0) * clamp((10.0 * DEG - dpsi) / (6.0 * DEG), 0.0, 1.0)
+            if w > 0.0:
+                n0 = (1.0 - w) * n0 + w * pn0
+                n_m1 = (1.0 - w) * n_m1 + w * (pn0 - ds * slope)
+            self.anchor_w = w
         slope = [[c.w_slope * (lanes[b] - lanes[a]) ** 2 / ds for b in range(M)] for a in range(M)]
         # station 1
         cost1 = []
@@ -1437,7 +1462,8 @@ class RaceBrain:
         # --- 계획 ---
         if len(self.t_list) != c.plan_stations + 1:
             self.t_list = [k * c.plan_ds / max(fr.v, 5.0) for k in range(c.plan_stations + 1)]
-        plan = self.planner.plan(fr, geo, self.travel, self.t_list)
+        anchor_ok = fr.moving_forward and not fr.teleport and self.t - self.last_recover_t > 1.5
+        plan = self.planner.plan(fr, geo, self.travel, self.t_list, anchor_ok)
         N = int(c.profile_length / c.plan_ds) + 1
         mu = [self.a_lat * self.grip.get(self._s_ahead(k * c.plan_ds)) * self.factor for k in range(N)]
         vcap = c.max_speed_kmh / 3.6
@@ -1654,7 +1680,7 @@ class RaceBrain:
             "bcap": round(self.brake_cap, 2), "slag": self.lag_taus[self.lag_best], "smw": round(self.smith_w, 2),
             "kdes": round(self.kappa_des, 5), "kmeas": round(self.kappa_meas, 5),
             "alat": round(self.a_lat, 2), "abrk": round(self.a_brake, 2), "gain": round(self.steer_gain.get(max(fr.v, 0.0)), 4),
-            "tp": fr.teleport, "stale": self.stale_now,
+            "tp": fr.teleport, "stale": self.stale_now, "anc": round(self.planner.anchor_w, 2),
             "plan": [round(x, 2) for x in getattr(self, "last_plan", None).n[:12:2]] if getattr(self, "last_plan", None) else None,
             "lohi": [[round(a, 1), round(b, 1)] for a, b in zip(self.last_plan.lo[:12:2], self.last_plan.hi[:12:2])] if getattr(self, "last_plan", None) else None})
 

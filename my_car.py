@@ -127,6 +127,8 @@ class Config:
     speed_lag: float = 0.25             # 스로틀·브레이크가 실제로 듣기까지 걸리는 시간(초). 2026-11-25 Map 10 실측 0.22~0.33
     gap_comp: bool = True               # 브레이크 뒤 구동 공백 보상 (제동 끝 무렵 목표를 학습값만큼 올림). 끄려면 False
     gap_max: float = 4.0                # 구동 공백 보상 학습값 최대 (m/s). 실측 평균 약 3.3
+    brake_ellipse: bool = True          # 제동 방향 그립을 따로 학습해 속도 계획의 마찰원을 앞뒤로 긴 타원으로. 끄려면 False
+    brake_cap_margin: float = 1.03      # 계획에는 실제로 낸 최대 제동보다 이만큼만 더 씀 (조금씩 늘려 감)
     sysid_weave: bool = True            # 출발 직후 미세 위빙으로 조향 특성 파악 (메모리 있으면 생략)
     sysid_amp: float = 0.05
     sysid_freq: float = 0.6
@@ -662,7 +664,9 @@ class SpeedPlanner:
         self.cfg = cfg
 
     def build(self, plan: Plan, geo: RoadGeometry, v0: float, mu: List[float],
-              a_brake: float, decel: "DecelModel", a_drive: float, drag: float, vcap: float) -> Profile:
+              a_brake: float, decel: "DecelModel", a_drive: float, drag: float, vcap: float,
+              ax_ratio: float = 1.0) -> Profile:
+        """ax_ratio: 제동 방향 그립 / 옆 그립 (1 = 원 모양 마찰원, 1보다 크면 앞뒤로 긴 타원)."""
         c = self.cfg
         ds = c.plan_ds
         N = int(c.profile_length / ds) + 1
@@ -684,13 +688,14 @@ class SpeedPlanner:
                 vk = 0.0
             v.append(vk)
         v_lim = list(v)
-        # 후진 패스: 가장 늦은 브레이킹 지점 (베르스타펜) + 코너 안 브레이크는 마찰원만큼만
+        # 후진 패스: 가장 늦은 브레이킹 지점 (베르스타펜) + 코너 안 브레이크는 마찰원(타원)만큼만
+        #  타원: 옆으로 lat 를 쓰고 있으면 제동은 (앞뒤 한계) × √(1 − (lat/옆 한계)²) 까지
         for k in range(N - 2, -1, -1):
             lat = v[k + 1] ** 2 * abs(kap[k])
-            room = mu[k] ** 2 - lat ** 2
+            ry = lat / max(mu[k], 1e-3)
             # 실측 풀브레이크 감속도와, 옆 그립을 쓰고 남은 마찰원 + (게임이 인정한 만큼의) 저항 중 작은 값
             vb2 = v[k + 1] ** 2
-            tire = math.sqrt(room) if room > 0 else 0.0
+            tire = mu[k] * ax_ratio * math.sqrt(1.0 - ry * ry) if ry < 1.0 else 0.0
             ab = min(a_brake, tire) + decel.B * vb2          # 브레이크 이득(부분 제동으로 실측)과 마찰원 중 작은 값
             if decel.n >= 20:                                  # 풀브레이크 실측이 쌓였으면 그 값도 상한으로
                 ab = min(ab, 0.97 * (decel.A + decel.B * vb2))
@@ -1086,6 +1091,9 @@ class RaceBrain:
         self.brk_last_t = -9.0                 # 마지막으로 브레이크를 밟은 시각
         self.gap_track: Optional[List[float]] = None   # [놓은 시각, 계획 최저 속도, 지금까지 실제 최저 속도]
         self.gap_events = 0
+        # 제동 방향 그립 (타원 마찰원 앞뒤 한계, m/s²). 처음엔 옆 그립과 같게 → 지금까지와 같은 원 모양에서 시작
+        if not getattr(self, "brake_cap", None):
+            self.brake_cap = self.a_lat
         self.prev_sig: Optional[Tuple[Any, Any, Tuple[Any, ...]]] = None   # 직전 프레임 센서 (멈춤 감지용)
         self.stale_now = False
         self.stale_frames = 0
@@ -1162,6 +1170,8 @@ class RaceBrain:
             self.steer_gain.from_dict(sg)
         self.mem_auto_sign = m.get("auto_sign", 1.0)
         self.gap_dv = float(m.get("gap_dv", 0.0))
+        if m.get("brake_cap"):
+            self.brake_cap = float(m["brake_cap"])
         if not same_map:
             return
         self.lap_len = m.get("lap_len")
@@ -1181,7 +1191,7 @@ class RaceBrain:
             "grip": self.grip.to_dict(),
             "steer": self.steer_gain.to_dict(), "decel": self.decel.to_dict(), "auto_sign": self.auto_sign,
             "phantoms": [[round(a, 1), round(b, 2)] for a, b in self.phantoms],
-            "gap_dv": round(self.gap_dv, 3),
+            "gap_dv": round(self.gap_dv, 3), "brake_cap": round(self.brake_cap, 3),
         }
 
     def save_memory(self, path: Optional[str] = None) -> None:
@@ -1394,7 +1404,14 @@ class RaceBrain:
         N = int(c.profile_length / c.plan_ds) + 1
         mu = [self.a_lat * self.grip.get(self._s_ahead(k * c.plan_ds)) * self.factor for k in range(N)]
         vcap = c.max_speed_kmh / 3.6
-        prof = self.speed_planner.build(plan, geo, fr.v, mu, self.a_brake, self.decel, self.a_drive, self.drag, vcap)
+        # 제동 방향 그립 (타원 마찰원): 실측 제동+옆 가속 합이 약 13~14 로 옆 그립(약 11)보다 큼 (2026-11-25 Map 10).
+        #  계획은 실제로 낸 최대 제동(brake_cap)보다 3%만 더 씀 → 낼 수 있으면 다음에 조금 더, 포화되면 그 값에 멈춤
+        ax_ratio = 1.0
+        if c.brake_ellipse:
+            ax_plan = min(self.brake_cap * c.brake_cap_margin, self.a_brake)
+            ax_ratio = clamp(ax_plan / max(self.a_lat, 1.0), 1.0, 1.5)
+        prof = self.speed_planner.build(plan, geo, fr.v, mu, self.a_brake, self.decel, self.a_drive, self.drag, vcap,
+                                        ax_ratio)
         self.t_list = prof.t[: c.plan_stations + 1]
         self.last_plan, self.last_prof, self.last_geo, self.last_mu = plan, prof, geo, mu
 
@@ -1549,6 +1566,7 @@ class RaceBrain:
             "st": round(steer, 3), "th": round(throttle, 3), "br": round(brake, 3),
             "state": self.state, "mode": self.plan_mode, "fac": round(self.factor, 3),
             "vref": self.debug.get("v_ref"), "vpred": round(self.v_pred * 3.6, 1), "gapdv": round(self.gap_dv * 3.6, 1),
+            "bcap": round(self.brake_cap, 2),
             "kdes": round(self.kappa_des, 5), "kmeas": round(self.kappa_meas, 5),
             "alat": round(self.a_lat, 2), "abrk": round(self.a_brake, 2), "gain": round(self.steer_gain.get(max(fr.v, 0.0)), 4),
             "tp": fr.teleport, "stale": self.stale_now,
@@ -1677,6 +1695,17 @@ class RaceBrain:
                 acc_b = (hv[-1][1] - hv[0][1]) / span_b
                 tire = -acc_b - self.drag * vmb * vmb
                 br_m = sum(cmd) / len(cmd)
+                # 제동 방향 그립 학습 (타원 마찰원): 실제로 낸 감속을 '순수 제동'으로 환산
+                #  포화(풀브레이크, 또는 명령한 만큼 감속이 안 나옴 = 그립 한계)면 그 값이 한계,
+                #  여유가 있었으면 '적어도 이만큼은 됨' (한 번에 5% 넘게는 안 올림)
+                if vmb > 8 and 0.0 < tire < 30.0 and self.t - self.last_col_t > 1.5:
+                    a_y = max(self.a_lat * self.grip.get(self.s_key), 1.0)
+                    r = min(a_lat_meas / a_y, 0.9)
+                    eq = tire / math.sqrt(1.0 - r * r)
+                    if min(cmd) > 0.95 or tire < 0.85 * br_m * self.a_brake:
+                        self.brake_cap += 0.3 * (eq - self.brake_cap)
+                    elif br_m > 0.3:
+                        self.brake_cap = max(self.brake_cap, min(eq, self.brake_cap * 1.05))
                 if vmb > 8 and min(cmd) > 0.95:
                     self.decel.update(vmb * vmb, -acc_b)          # 풀브레이크 실측 총감속도
                     if tire > self.a_brake:
@@ -1707,6 +1736,8 @@ class RaceBrain:
             self.slips += 1
             sk = self.s_key
             ratio = a_tot / max(self.a_lat, 1.0)
+            if self.prev_brake > 0.1:                    # 제동 중 미끄러짐 → 제동 방향 그립도 깎음
+                self.brake_cap = max(0.8 * self.a_lat, self.brake_cap * 0.92)
             # 해밀턴: 먼저 '그 자리'만 깎음 (젖은 노면·범프 같은 국소 문제일 수 있음)
             local_before = self.grip.get(sk)
             self.grip.cut(sk, ratio * 0.97, 4, 2)

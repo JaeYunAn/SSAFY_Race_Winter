@@ -115,6 +115,7 @@ SSAFY 싸피레이스(AirSim 기반 3D 주행 시뮬레이터 "Algo")에서 차�
 | vref | 목표 속도(km/h). 브레이크 지연 보상 뒤로는 '명령이 듣는 시점(약 0.25초 뒤) 위치'의 목표 속도 |
 | vpred | 지연 보상용 예측 속도(km/h): 지금 속도 + 아직 듣지 않은 최근 명령의 효과 |
 | gapdv | 브레이크 뒤 구동 공백 보상 학습값(km/h): 제동 끝 무렵 목표 속도를 이만큼 올림 (`Config.gap_comp` 로 끔) |
+| bcap | 학습한 제동 방향 그립(m/s²). 속도 계획의 제동은 옆 그립(alat)이 아니라 이 값의 타원으로 계산 (`Config.brake_ellipse` 로 끔) |
 | kdes / kmeas | 목표 곡률 / 실제 곡률 |
 | alat / abrk / gain | 학습된 코너 한계·제동(m/s²) / 조향 반응(1/m per steer) |
 | plan / lohi | 앞 경로의 옆 위치 / 갈 수 있는 좌우 범위 |

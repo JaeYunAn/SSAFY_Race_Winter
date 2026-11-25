@@ -202,6 +202,7 @@ class Car:
         self.penalty_frames = 0
 
     def reset(self):
+        self.pedal_q = []                 # 페달(스로틀·브레이크) 지연용 명령 기록 (시각, 스로틀, 브레이크)
         self.x, self.y = self.reset_pos
         self.yaw = 0.0
         self.v = 0.0
@@ -223,6 +224,17 @@ class Car:
             th = max(-1.0, min(1.0, float(ctl.throttle)))
             br = max(0.0, min(1.0, float(ctl.brake)))
             rev = bool(getattr(ctl, "is_manual_gear", False)) and getattr(ctl, "manual_gear", 0) == -1
+        lag = p.get("pedal_lag", 0.0)
+        if lag > 0:
+            # 실제 시뮬레이터 흉내: 스로틀·브레이크가 lag 초 늦게 들음 (2026-11-25 Map 10 실측 0.22~0.33초)
+            now = WORLD.t if WORLD else 0.0
+            self.pedal_q.append((now, th, br))
+            while len(self.pedal_q) > 1 and self.pedal_q[1][0] <= now - lag:
+                self.pedal_q.pop(0)
+            if self.pedal_q[0][0] <= now - lag:
+                th, br = self.pedal_q[0][1], self.pedal_q[0][2]
+            else:
+                th, br = 0.0, 0.0
         self.steer_act += (st - self.steer_act) * (1 - math.exp(-h / p["steer_lag"]))
         v = self.v
         _, lat = self.track.project(self.x, self.y, self.idx)
@@ -308,7 +320,8 @@ class World:
         self.t = 0.0
         self.start_delay = start_delay
         p = dict(mu=10.0, mu_grass=6.5, max_steer=40 * math.pi / 180, wheelbase=2.9, steer_lag=0.08,
-                 steer_red=0.35, a_max=7.0, power=230.0, rev_acc=4.0, brake=11.0, drag=0.0012, roll=0.15)
+                 steer_red=0.35, a_max=7.0, power=230.0, rev_acc=4.0, brake=11.0, drag=0.0012, roll=0.15,
+                 pedal_lag=0.0)
         if phys:
             p.update(phys)
         self.p = p

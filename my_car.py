@@ -124,6 +124,7 @@ class Config:
     steer_gain_init: float = 0.2        # 조향 1당 곡률(1/m). 바퀴 최대 각 약 40~45° 기준 추정
     steer_lag_match: float = 0.15       # 조향→측정 곡률 지연 추정(초)
     a_cmd_smooth: float = 0.5           # 가감속 명령 거르기 (1=안 거름)
+    speed_lag: float = 0.25             # 스로틀·브레이크가 실제로 듣기까지 걸리는 시간(초). 2026-11-25 Map 10 실측 0.22~0.33
     sysid_weave: bool = True            # 출발 직후 미세 위빙으로 조향 특성 파악 (메모리 있으면 생략)
     sysid_amp: float = 0.05
     sysid_freq: float = 0.6
@@ -1067,6 +1068,9 @@ class RaceBrain:
         self.lag_syy = 0.0
         self.lag_best = 1
         self.a_cmd_f = 0.0
+        self.acc_sent: List[Tuple[float, float, float]] = []   # 최근에 보낸 가감속 명령 (시각, 기대 가속도, 프레임 간격)
+        self.v_pred = 0.0
+        self.last_recover_t = -9.0
         self.wall_prev: Optional[float] = None
         self.wall_dt = c.dt
         self.auto_sign = self.mem_auto_sign
@@ -1269,6 +1273,7 @@ class RaceBrain:
             self.f_n.reset(fr.n)
             self.integ = 0.0
             self.a_cmd_f = 0.0
+            self.acc_sent = []
             self.planner.prev_abs = []
             self.hist = []
 
@@ -1334,6 +1339,8 @@ class RaceBrain:
         # --- 복구 상태 기계 ---
         out = self._recovery(fr, dt)
         if out is not None:
+            self.acc_sent = []                       # 복구 중 명령은 지연 예측에 쓰지 않음
+            self.last_recover_t = self.t
             self.prev = fr
             self.prev_steer, self.prev_throttle, self.prev_brake = out
             self._log(fr, *out)
@@ -1387,9 +1394,22 @@ class RaceBrain:
         steer = clamp(steer_ff + self.integ, -1.0, 1.0)
 
         # --- 가감속: 피드포워드 + P ---
-        d_ref = max(v * 0.3, 2.0)
-        v_ref = lerp_list(prof.d, prof.v, d_ref)
-        a_raw = (v_ref * v_ref - v * v) / (2 * d_ref) + 1.0 * (v_ref - v)
+        # 베르스타펜 다듬기 (브레이크 지연 보상): 스로틀·브레이크는 약 0.25초 늦게 듣는다 (실측).
+        #  보상이 없으면 브레이크를 놓은 뒤에도 0.25초 동안 계속 감속해 코너마다 8~18 km/h 더 느려진다.
+        #  → 이미 보냈지만 아직 듣지 않은 명령(최근 speed_lag 초)의 효과를 더해 '명령이 듣는 시점의 속도·위치'를
+        #    예측하고, 그 상태로 가감속을 계산한다 (조향의 지연 예측과 같은 생각, 제어 이론의 스미스 예측기).
+        tau_v = c.speed_lag
+        # 자세가 비정상(역주행, 진행 방향이 46° 넘게 틀어짐, 복구·U턴 직후)이면 지연 보상 없이 예전 방식 그대로
+        #  (벽 쪽을 향해 있을 때 브레이크를 일찍 놓으면 위험. 정상 코너링도 30° 가까이 틀어지므로 기준은 넉넉히)
+        if not fr.moving_forward or abs(fr.psi) > 0.8 or self.t - self.last_recover_t < 1.5:
+            tau_v = 0.0
+        inc = sum(a * h for (ts, a, h) in self.acc_sent if ts > self.t - tau_v - 1e-6) if tau_v > 0 else 0.0
+        v_c = max(v + inc, 0.0)
+        self.v_pred = v_c
+        d_c = max(v + 0.5 * inc, 0.0) * tau_v
+        d_ref = max(v_c * 0.3, 2.0)
+        v_ref = lerp_list(prof.d, prof.v, min(d_c + d_ref, prof.d[-1]))
+        a_raw = (v_ref * v_ref - v_c * v_c) / (2 * d_ref) + 1.0 * (v_ref - v_c)
         self.a_cmd_f += c.a_cmd_smooth * (a_raw - self.a_cmd_f)
         if a_raw < self.a_cmd_f - 2.0 or (a_raw < 0.0 < self.a_cmd_f):     # 새 제동 요구는 바로 반영
             self.a_cmd_f = a_raw
@@ -1405,6 +1425,10 @@ class RaceBrain:
                 throttle = -1.0                          # 후진 기어 제동 (선택)
         if fr.v < -0.3:                                  # 아직 뒤로 가고 있으면 멈추고 출발
             throttle, brake = 0.0, 1.0
+        # 이번 명령이 낼 것으로 기대하는 가속도를 기록 (다음 프레임들의 지연 예측에 씀)
+        self.acc_sent.append((self.t, throttle * self.a_drive - brake * self.a_brake - drag_a, dt))
+        if len(self.acc_sent) > 10:
+            self.acc_sent.pop(0)
 
         # --- 기록 ---
         self._telemetry(fr, geo)
@@ -1428,7 +1452,8 @@ class RaceBrain:
             "opp": [[round(d, 1), round(m, 2), round(sp * 3.6, 1)] for d, m, sp in fr.opponents[:2]],
             "st": round(steer, 3), "th": round(throttle, 3), "br": round(brake, 3),
             "state": self.state, "mode": self.plan_mode, "fac": round(self.factor, 3),
-            "vref": self.debug.get("v_ref"), "kdes": round(self.kappa_des, 5), "kmeas": round(self.kappa_meas, 5),
+            "vref": self.debug.get("v_ref"), "vpred": round(self.v_pred * 3.6, 1),
+            "kdes": round(self.kappa_des, 5), "kmeas": round(self.kappa_meas, 5),
             "alat": round(self.a_lat, 2), "abrk": round(self.a_brake, 2), "gain": round(self.steer_gain.get(max(fr.v, 0.0)), 4),
             "tp": fr.teleport,
             "plan": [round(x, 2) for x in getattr(self, "last_plan", None).n[:12:2]] if getattr(self, "last_plan", None) else None,

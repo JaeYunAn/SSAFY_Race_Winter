@@ -59,6 +59,9 @@ CASES = [
                                                                        power=300.0))),
     ("조향 부호 반대인 차 (basic)", dict(track_name="basic", laps=1, phys=dict(steer_dir=-1.0))),
     ("보이지 않는 장애물 (2랩)", dict(track_name="hidden", laps=2)),
+    # 실제 시뮬레이터처럼 페달이 늦게 듣는 차 (2026-11-25 Map 10 실측: 지연 0.22~0.33초, 브레이크 1당 약 13 m/s²)
+    ("페달 지연 0.25초 차 (basic 2랩)", dict(track_name="basic", laps=2, phys=dict(pedal_lag=0.25, brake=13.0))),
+    ("페달 지연 0.25초 차 (ssafy 1랩)", dict(track_name="ssafy", laps=1, phys=dict(pedal_lag=0.25, brake=13.0))),
 ]
 if not os.path.exists(os.path.join(os.path.dirname(HERE), "my_car_basic.py")):
     CASES = [c for c in CASES if c[1].get("battle") != "basic"]

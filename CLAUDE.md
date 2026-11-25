@@ -80,7 +80,8 @@ SSAFY 싸피레이스(AirSim 기반 3D 주행 시뮬레이터 "Algo")에서 차�
 - 봇 실행 (시뮬레이터가 켜져 있을 때만): `run_bot.bat` 또는 `./.venv/Scripts/python.exe my_car.py`
 - **코드를 고친 뒤에는 반드시 오프라인 시험을 돌린다** (시뮬레이터 불필요, 약 1분):
   `./.venv/Scripts/python.exe offline_test/run_all.py`
-  - 시험 16개의 완주 시간·충돌·벌점·리셋·예외 합계가 나온다. 고치기 전과 비교해서 보고한다.
+  - 시험 18개의 완주 시간·충돌·벌점·리셋·예외 합계가 나온다. 고치기 전과 비교해서 보고한다.
+  - 기본 가짜 물리는 페달이 즉시 듣는다. 실제처럼 페달이 늦게 듣는 경우는 '페달 지연 0.25초 차' 시험 2개(`phys` 의 `pedal_lag`)로 본다.
   - 트랙 하나만: `./.venv/Scripts/python.exe offline_test/run_race.py basic 1` (트랙: basic, speed, ssafy, germany, hidden)
   - 출력에서 UnicodeEncodeError 가 나면 환경 변수 `PYTHONIOENCODING=utf-8` 을 붙여 실행한다.
 - 가짜 물리는 실제 시뮬레이터와 다르다. 최종 판단은 실제 주행 로그로 한다.
@@ -108,7 +109,8 @@ SSAFY 싸피레이스(AirSim 기반 3D 주행 시뮬레이터 "Algo")에서 차�
 | obs / opp | 앞 장애물 [거리, 옆 위치] / 상대 차 [거리, 옆 위치, 속도] |
 | st / th / br | 내보낸 조향 / 가속 / 브레이크 |
 | state / mode / fac | 주행 상태 / 계획 모드 / 속도 배율 |
-| vref | 목표 속도(km/h) |
+| vref | 목표 속도(km/h). 브레이크 지연 보상 뒤로는 '명령이 듣는 시점(약 0.25초 뒤) 위치'의 목표 속도 |
+| vpred | 지연 보상용 예측 속도(km/h): 지금 속도 + 아직 듣지 않은 최근 명령의 효과 |
 | kdes / kmeas | 목표 곡률 / 실제 곡률 |
 | alat / abrk / gain | 학습된 코너 한계·제동(m/s²) / 조향 반응(1/m per steer) |
 | plan / lohi | 앞 경로의 옆 위치 / 갈 수 있는 좌우 범위 |

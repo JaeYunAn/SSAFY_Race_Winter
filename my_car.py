@@ -110,6 +110,7 @@ class Config:
     w_curv: float = 4.0e3               # 곡률² 비용
     w_slope: float = 0.8                # 옆으로 움직이는 비용
     w_cons: float = 0.15                # 지난 계획과 다르면 드는 비용 (좌우 흔들림 방지)
+    plan_hyst: float = 0.3              # 장애물·다른 차가 없을 때 지난번에 고른 칸에서 벗어나는 비용 (칸 뒤집힘 방지). 0 이면 끔
     w_edge: float = 3.0
     w_near: float = 6.0                 # 장애물 근처 비용 (문호준 2단계 위험 비용)
     lat_buffer: float = 0.8             # 0.1초 제어라 추종 오차를 감안해 옆 여유를 넉넉히
@@ -487,6 +488,7 @@ class PathPlanner:
     def __init__(self, cfg: Config):
         self.cfg = cfg
         self.prev_abs: List[Tuple[float, float]] = []   # (누적거리, n) 지난 계획
+        self.prev_dp_abs: List[Tuple[float, float]] = []   # (누적거리, n) 지난번 격자 DP 가 고른 칸
         M = cfg.lanes
         self.M = M
 
@@ -529,11 +531,27 @@ class PathPlanner:
             else:
                 prev_n.append(fr.n)
 
+        # 지난번에 고른 칸 (2026-11-25 Map 161 실측으로 넣음): 격자 DP 는 도로 폭을 11칸(칸 간격 1.3~2.1 m)으로 나눠 고르는데,
+        #  긴 직선에서 두 칸의 비용이 거의 같으면 차가 두 칸 가운데를 지날 때마다 한 칸씩 뒤집혀 37.5 m 앞 목표가 한 번에 1.3 m 튐
+        #  (빠른 직선 프레임의 7%, 0.8초 만에 되돌아가는 왔다 갔다). 그 뒤 1.5초 동안 조향 흔들림 0.113, 나머지 0.071 → 직선 흔들림.
+        #  지난 계획(다듬은 선)은 칸 사이에 있어서 '그대로 두기'에 이득이 없었음 → 지난번에 고른 칸 자체에서 벗어나는 비용을 더함.
+        #  장애물·다른 차가 계획 거리 안에 있으면 넣지 않음 (비킬 쪽을 바로 바꿔야 함. 넣으면 가짜 차 ssafy 에서 충돌)
+        free_road = not any(blocks[k] for k in range(1, K + 1))
+        prev_dp: List[Optional[float]] = []
+        for d in d_list:
+            if self.prev_dp_abs and free_road and c.plan_hyst > 0.0:
+                prev_dp.append(lerp_list([p[0] for p in self.prev_dp_abs], [p[1] for p in self.prev_dp_abs], travel + d))
+            else:
+                prev_dp.append(None)
+
         # 지점별 비용
         node = [[0.0] * M for _ in range(K + 1)]
         for k in range(1, K + 1):
+            pd = prev_dp[k]
             for j, nj in enumerate(lanes):
                 cost = c.w_cons * (nj - prev_n[k]) ** 2
+                if pd is not None:
+                    cost += c.plan_hyst * (nj - pd) ** 2
                 edge = abs(nj) - (B - 1.0)
                 if edge > 0:
                     cost += c.w_edge * edge * edge
@@ -598,6 +616,7 @@ class PathPlanner:
             p = bps[k - 3][idx[k - 1]][idx[k]]
             idx[k - 2] = p
         n = [n0] + [lanes[idx[k]] for k in range(1, K + 1)]
+        self.prev_dp_abs = [(travel + d, nn) for d, nn in zip(d_list[1:], n[1:])]
 
         # 통로(막히지 않은 구간) 결정
         lo_l, hi_l, blocked = [], [], []

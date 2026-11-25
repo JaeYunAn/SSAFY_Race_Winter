@@ -332,6 +332,7 @@ class World:
         self.waiting = 0
         self.participants = 0
         self.gen = 0
+        self.frozen_total = 0.0           # 시뮬레이터가 멈춰 있던 시간 합 (기록 시간에서 뺌)
 
     @property
     def started(self):
@@ -340,6 +341,13 @@ class World:
     def advance(self, dt):
         if not self.started:
             self.t += dt
+            return
+        # 실제 시뮬레이터 흉내: 출발 뒤 freeze=[(시작초, 길이초), ...] 동안 세계가 멈춤
+        #  (2026-11-25 Map 10 실측: 1.1초씩 2번, 그동안 센서 값이 그대로). 봇은 계속 불리고 같은 값을 받음
+        wt = self.t - self.start_delay
+        if any(a <= wt < a + d for a, d in self.p.get("freeze", ())):
+            self.t += dt
+            self.frozen_total += dt
             return
         n = 4
         h = dt / n
@@ -373,7 +381,7 @@ class World:
             for c in self.cars.values():
                 if not c.finished and c.s_total >= self.laps * self.track.length:
                     c.finished = True
-                    c.finish_time = self.t - self.start_delay
+                    c.finish_time = self.t - self.start_delay - self.frozen_total
                 c.lap = min(self.laps, 1 + int(max(c.s_total, 0) // self.track.length))
             self.t += h
         for c in self.cars.values():

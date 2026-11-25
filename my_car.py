@@ -1071,6 +1071,9 @@ class RaceBrain:
         self.acc_sent: List[Tuple[float, float, float]] = []   # 최근에 보낸 가감속 명령 (시각, 기대 가속도, 프레임 간격)
         self.v_pred = 0.0
         self.last_recover_t = -9.0
+        self.prev_sig: Optional[Tuple[Any, Any, Tuple[Any, ...]]] = None   # 직전 프레임 센서 (멈춤 감지용)
+        self.stale_now = False
+        self.stale_frames = 0
         self.wall_prev: Optional[float] = None
         self.wall_dt = c.dt
         self.auto_sign = self.mem_auto_sign
@@ -1253,6 +1256,11 @@ class RaceBrain:
         self.wall_prev = now
         fr = self.adapter.parse(raw, dt, self.prev_throttle, self.half)
         self.t += dt
+        # 시뮬레이터가 멈춘 프레임: 움직이는 중인데 속도·중앙 거리·경유점 거리가 직전과 똑같음
+        sig = (_get(raw, "speed", None), _get(raw, "to_middle", None),
+               tuple((_get(raw, "distance_to_way_points", None) or [])[:3]))
+        self.stale_now = self.prev_sig is not None and sig == self.prev_sig and abs(fr.v) > 1.0
+        self.prev_sig = sig
 
         # --- 출발 신호 전: 가속 페달만 밟고 대기 (학습·복구·계획 모두 쉼) ---
         if not self.started:
@@ -1263,6 +1271,15 @@ class RaceBrain:
                 self.prev_steer, self.prev_throttle, self.prev_brake = 0.0, 1.0, 0.0
                 self._log(fr, 0.0, 1.0, 0.0)
                 return self._emit(0.0, 1.0, 0.0)
+
+        # --- 시뮬레이터가 멈춘 동안: 마지막 명령을 그대로 내고 학습·조향 적분·랩 시간은 멈춤 ---
+        #  2026-11-25 Map 10: 1.1초씩 2번 멈춤. 그동안 '브레이크를 밟았는데 안 줄었다'로 학습해 a_brake 9.29→7.75,
+        #  조향 적분이 쌓였다가 풀린 뒤 차가 흔들림. 학습 창(hist)도 비워서 멈춘 프레임이 섞이지 않게 함
+        if self.stale_now:
+            self.stale_frames += 1
+            self.hist = []
+            self._log(fr, self.prev_steer, self.prev_throttle, self.prev_brake)
+            return self._emit(self.prev_steer, self.prev_throttle, self.prev_brake)
 
         self.t_move += dt
         self.lap_t += dt
@@ -1404,6 +1421,13 @@ class RaceBrain:
         if not fr.moving_forward or abs(fr.psi) > 0.8 or self.t - self.last_recover_t < 1.5:
             tau_v = 0.0
         inc = sum(a * h for (ts, a, h) in self.acc_sent if ts > self.t - tau_v - 1e-6) if tau_v > 0 else 0.0
+        # 장애물·앞차 앞에서 멈추거나 비켜야 할 때는 '브레이크를 덜 밟는 쪽'으로는 예측을 쓰지 않음
+        #  (실제 지연이 생각보다 짧으면 덜 밟아서 부딪히게 됨. 일찍 밟는 쪽(inc > 0)은 그대로 씀)
+        near_block = (any(0.0 < d < 60.0 and abs(m - fr.n) < 4.0 for d, m in fr.obstacles)
+                      or any(0.0 < d < 40.0 for d, _, _ in fr.opponents)
+                      or any(b for b, dd in zip(plan.blocked, plan.d) if dd < 80.0))
+        if near_block:
+            inc = max(inc, 0.0)
         v_c = max(v + inc, 0.0)
         self.v_pred = v_c
         d_c = max(v + 0.5 * inc, 0.0) * tau_v
@@ -1455,7 +1479,7 @@ class RaceBrain:
             "vref": self.debug.get("v_ref"), "vpred": round(self.v_pred * 3.6, 1),
             "kdes": round(self.kappa_des, 5), "kmeas": round(self.kappa_meas, 5),
             "alat": round(self.a_lat, 2), "abrk": round(self.a_brake, 2), "gain": round(self.steer_gain.get(max(fr.v, 0.0)), 4),
-            "tp": fr.teleport,
+            "tp": fr.teleport, "stale": self.stale_now,
             "plan": [round(x, 2) for x in getattr(self, "last_plan", None).n[:12:2]] if getattr(self, "last_plan", None) else None,
             "lohi": [[round(a, 1), round(b, 1)] for a, b in zip(self.last_plan.lo[:12:2], self.last_plan.hi[:12:2])] if getattr(self, "last_plan", None) else None})
 
@@ -1565,19 +1589,32 @@ class RaceBrain:
             acc = (v1 - v0) / span if span > 0 else 0.0
             ths = [x[2] for x in h]
             brs = [x[3] for x in h]
-            br_m = sum(brs[1:]) / (len(brs) - 1)
-            tire = -acc - self.drag * vm * vm
-            local_g = self.grip.get(self.s_key)
-            if min(brs[1:]) > 0.95 and vm > 8 and max(ths) <= 0:
-                self.decel.update(vm * vm, -acc)          # 풀브레이크 실측 총감속도
-            if (br_m > 0.3 and min(brs[1:]) > 0.05 and vm > 8 and max(ths) == 0 and min(ths) == 0
-                    and tire < 0.85 * self.a_lat * local_g and br_m < 0.95):
-                # 베르스타펜: 실측 감속도에서 공기저항 몫을 빼고 '브레이크 1당 감속도'만 추정
-                meas = tire / br_m
-                if 2.0 < meas < 30.0:
-                    w = 0.3 * min(1.0, br_m)
-                    self.a_brake += w * (meas - self.a_brake)
-            elif max(brs) == 0 and min(ths) >= 0 and max(ths) - min(ths) < 0.1 and vm > 3:
+            # 베르스타펜: 실측 감속도에서 공기저항 몫을 빼고 '브레이크 1당 감속도'만 추정 (2026-11-25 실측으로 고침)
+            #  - 브레이크는 약 speed_lag 초 늦게 들으므로 최근 3구간의 감속은 lag 프레임 앞선 명령과 짝지음
+            #    (예전: 같은 시각 명령과 비교 → 밟기 시작한 직후 '안 줄었다'로 낮게 학습)
+            #  - 예전 조건 '감속 < 0.85×옆 그립'은 실제 제동(1당 13~15)을 모두 걸러 한 번도 학습되지 않았음 → 뺌
+            #  - 풀브레이크로 실제 나온 감속은 '브레이크 1당 효과'의 하한 (1로 12.5가 나왔으면 1당 12.5 이상)
+            n_h = len(self.hist)
+            lag_n = int(clamp(round(self.cfg.speed_lag / max(dt, 0.02)), 0, 3))
+            hv = self.hist[-4:]                                    # 속도 3구간
+            cmd = [x[3] for x in self.hist[n_h - 3 - lag_n:n_h - lag_n]]
+            ths_b = [x[2] for x in self.hist[n_h - 4 - lag_n:]]
+            span_b = hv[-1][0] - hv[0][0]
+            if span_b > 0 and max(ths_b) <= 0 and min(cmd) > 0.05:
+                vmb = 0.5 * (hv[0][1] + hv[-1][1])
+                acc_b = (hv[-1][1] - hv[0][1]) / span_b
+                tire = -acc_b - self.drag * vmb * vmb
+                br_m = sum(cmd) / len(cmd)
+                if vmb > 8 and min(cmd) > 0.95:
+                    self.decel.update(vmb * vmb, -acc_b)          # 풀브레이크 실측 총감속도
+                    if tire > self.a_brake:
+                        self.a_brake += 0.3 * (min(tire, 30.0) - self.a_brake)
+                elif vmb > 8 and 0.2 < br_m < 0.9:
+                    meas = tire / br_m
+                    if 2.0 < meas < 30.0:
+                        w = 0.3 * min(1.0, br_m)
+                        self.a_brake += w * (meas - self.a_brake)
+            if max(brs) == 0 and min(ths) >= 0 and max(ths) - min(ths) < 0.1 and vm > 3:
                 self.drive_model.update(sum(ths) / len(ths), vm * vm, acc)
                 self.a_drive, self.drag = self.drive_model.a_drive, self.drive_model.drag
         # 그립: 조향으로 기대한 곡률보다 실제 곡률이 모자라고, 옆 그립을 많이 쓰는 중이면 미끄러짐

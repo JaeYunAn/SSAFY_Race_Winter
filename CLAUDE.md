@@ -14,6 +14,10 @@ SSAFY 싸피레이스(AirSim 기반 3D 주행 시뮬레이터 "Algo")에서 차�
 5. 아래 '대회 규칙'과 '코드 조건'을 지킨다: my_car.py 만 수정, `half_road_limit` 외 부모 멤버 금지, 좌표 하드코딩 금지, Python 3.7 문법, 서버에서 파일 쓰기 금지.
 6. 큰 변경 전에는 `my_car.py` 를 `backup/my_car_YYYYMMDD_HHMMSS.py` 로 복사해 둔다.
 7. my_car.py 의 레전드 전략은 지우거나 끄지 않는다.
+8. 코드는 GitHub 비공개 저장소 `JaeYunAn/SSAFY_Race_Winter` (이 workspace 폴더가 루트, 브랜치 `main`) 로 집 노트북과 SSAFY PC 사이에서 맞춘다.
+   - 작업을 시작할 때 `git status` 와 `git pull` 로 다른 PC에서 올린 변경이 있는지 먼저 확인한다.
+   - 커밋·push 는 사용자가 요청할 때만 한다. 커밋 메시지는 한국어로, 무엇을 왜 바꿨는지 적는다.
+   - 학습값(`memory*.json`)·로그(`logs/`)는 git 에 없어서 PC마다 다르다. 로그를 분석할 때는 이 PC에서 달린 기록인지 생각한다.
 
 | 전략 | 코드 위치 |
 |---|---|
@@ -33,6 +37,9 @@ SSAFY 싸피레이스(AirSim 기반 3D 주행 시뮬레이터 "Algo")에서 차�
 - `DrivingInterface/` 는 대회 제공 원본이다. 서버는 원본을 쓰므로 **절대 고치지 않는다.** (센서 계산 방식을 확인할 때 읽기만 한다)
 - `my_car_basic.py`(대회 기본 예제), `my_car_template.py`(빈 템플릿)는 참고용이다.
 - `offline_test/` 는 시뮬레이터 없이 my_car.py 를 시험하는 도구다 (가짜 물리 + 진짜 drive_controller.py).
+- git 저장소에 들어 있는 것: my_car.py, offline_test/, .bat 스크립트, README.md, CLAUDE.md, requirements.txt, .gitignore, .gitattributes
+- `.gitignore` 로 빼는 것: `DrivingInterface/`, `my_car_basic.py`, `my_car_template.py`, `.venv/`, `logs/`, `memory*.json`, `*.pdf`. 이 줄들을 지우지 않는다.
+- `.gitattributes` 는 `.bat` 을 CRLF 로 고정한다 (LF 면 `goto` 가 깨질 수 있음).
 
 ## 대회 규칙 (어기면 실격 위험)
 
@@ -65,7 +72,7 @@ SSAFY 싸피레이스(AirSim 기반 3D 주행 시뮬레이터 "Algo")에서 차�
 
 ## 실행과 시험
 
-- 시뮬레이터는 사용자가 직접 켠다: `..\start_simulator.bat` (맵 번호 선택). Claude 는 시뮬레이터를 켜거나 끄지 않는다.
+- 시뮬레이터는 사용자가 직접 켠다: `..\start_simulator.bat` (맵 번호 선택, 저장소 밖 바로 위 폴더에 있음). Claude 는 시뮬레이터를 켜거나 끄지 않는다.
 - 봇 실행 (시뮬레이터가 켜져 있을 때만): `run_bot.bat` 또는 `./.venv/Scripts/python.exe my_car.py`
 - **코드를 고친 뒤에는 반드시 오프라인 시험을 돌린다** (시뮬레이터 불필요, 약 1분):
   `./.venv/Scripts/python.exe offline_test/run_all.py`
@@ -80,6 +87,7 @@ SSAFY 싸피레이스(AirSim 기반 3D 주행 시뮬레이터 "Algo")에서 차�
 - `memory_car.json`: 가장 최근 학습값. 처음 달리는 맵에서는 여기서 차 특성(조향·가속·제동·그립)만 가져온다.
 - 맵 번호는 `문서\AirSim\settings.json` 의 `Algo.Map` 에서 읽는다 (`local_map_number`).
 - 다른 맵의 랩 길이·고스트를 쓰면 랩 계산과 플랜 A/B 가 틀어지므로 맵 기록은 같은 맵에서만 쓴다.
+- 학습값 파일은 git 에 올리지 않는다 (매 주행마다 바뀌어 두 PC에서 충돌함). 다른 PC로 옮길 때는 사용자가 직접 복사한다.
 
 ## 실제 주행 로그 (logs/drive_map<맵번호>_날짜_시간.jsonl, 0.1초당 한 줄)
 
@@ -112,3 +120,4 @@ SSAFY 싸피레이스(AirSim 기반 3D 주행 시뮬레이터 "Algo")에서 차�
 ## 보안
 
 - 대회 가이드 PDF(`..\*.pdf`)는 대외비다. 내용을 외부로 옮기거나 저장소에 올리지 않는다.
+- GitHub 저장소는 비공개로 유지한다. SSAFY 제공 파일(`DrivingInterface/`, 기본 예제)도 올리지 않는다.

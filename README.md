@@ -2,6 +2,8 @@
 
 원본 템플릿(`MyCar_20261113`)은 그대로 두고, 이 폴더에서 코드를 고치고 실행합니다.
 
+이 폴더는 GitHub 비공개 저장소 [JaeYunAn/SSAFY_Race_Winter](https://github.com/JaeYunAn/SSAFY_Race_Winter) (브랜치 `main`)와 연결되어 있습니다. 코드는 git 으로 여러 PC에서 맞추고, SSAFY 제공 파일·학습값·로그는 PC마다 따로 둡니다.
+
 ## 폴더 구성
 
 | 파일 | 설명 |
@@ -16,13 +18,31 @@
 | `run_offline_test.bat` | 시뮬레이터 없이 `my_car.py` 점검 (가짜 물리 + 진짜 drive_controller) |
 | `offline_test/` | 오프라인 점검 코드 |
 
-## 처음 한 번
+**git 저장소에 없는 것** (`.gitignore`, PC마다 따로 있음)
 
-1. `setup_python.bat` 더블클릭
-   - 이 PC의 SSAFY 템플릿(`MyCar_...\Template_Python`)에서 `DrivingInterface`, 기본 예제를 자동으로 복사합니다
+| 파일 | 이유 / 구하는 법 |
+|---|---|
+| `DrivingInterface/`, `my_car_basic.py`, `my_car_template.py` | SSAFY 제공 파일. `setup_python.bat` 이 그 PC의 템플릿에서 복사 |
+| `.venv/` | PC마다 `setup_python.bat` 이 만듦 |
+| `memory_*.json`, `logs/` | 주행할 때마다 바뀌는 학습값·로그. 옮기려면 직접 복사 |
+| `*.pdf` | 대회 가이드 (대외비) |
+| `..\start_simulator.bat` | 이 폴더 바깥(바로 위 폴더)에 둠. 작업 키트(`ssafy_race_kit.zip`)에 들어 있음 |
+
+## 처음 한 번 (새 PC)
+
+1. 저장소 받기: SSAFY 파일(`MyCar_...` 폴더와 시뮬레이터)이 있는 폴더에서 PowerShell 또는 Git Bash 를 열고
+   ```
+   git clone https://github.com/JaeYunAn/SSAFY_Race_Winter.git workspace
+   ```
+   - git 이 없으면 [git-scm.com](https://git-scm.com) 에서 받아 기본값으로 설치하고, 처음 한 번 `git config --global user.name "이름"`, `git config --global user.email "GitHub 이메일"`
+   - 비공개 저장소라서 처음에 GitHub 로그인 창이 뜹니다 (저장소에 초대된 계정만 받을 수 있음)
+   - `start_simulator.bat` 은 저장소에 없으므로 작업 키트에서 꺼내 `workspace` 바로 위 폴더에 둡니다
+2. `workspace\setup_python.bat` 더블클릭
+   - 이 PC의 SSAFY 템플릿(`MyCar_...\Template_Python`)에서 `DrivingInterface`, 기본 예제를 자동으로 복사합니다 (`workspace` 의 바로 위·그 위 폴더에서 찾음)
    - Python 3.7이 없으면 Y를 누르면 python.org에서 3.7.9를 받아 이 계정에만 설치합니다 (관리자 권한·PATH 변경 없음)
    - 기존 Python 3.12는 그대로 둡니다
    - 마지막에 `OK: Python 3.7.9 / numpy ...` 가 나오면 끝
+3. (선택) 학습된 차 특성으로 출발하려면 다른 PC의 `memory_map*.json`, `memory_car.json` 을 이 폴더에 복사
 
 ## 매번 실행 순서
 
@@ -69,6 +89,7 @@
   - `memory_car.json`: 가장 최근 학습값. 처음 달리는 맵에서는 여기서 차 특성만 가져옵니다 (다른 맵의 랩 기록은 쓰지 않음)
   - `logs\drive_날짜_시간.jsonl`: 프레임별 주행 기록 (튜닝할 때 이 파일을 주면 분석 가능)
 - 서버에서는 이 변수가 없으므로 파일을 하나도 쓰지 않습니다
+- 학습값과 로그는 git 에 올리지 않습니다 (PC마다 따로 쌓임)
 - 제출 전: `memory_map<맵번호>.json` 내용을 `my_car.py` 의 `EMBEDDED_MEMORY = None` 자리에 붙여 넣으면 서버에서도 학습된 차 특성으로 출발합니다 (서버 맵을 알 수 없으므로 랩 기록은 쓰지 않음)
 
 ## 시뮬레이터 조작
@@ -77,12 +98,30 @@
 - Backspace 리셋, F / B / `\` / `/` 카메라
 - 이상하면 작업 관리자에서 `Algo-Win64-Shipping.exe` 종료 후 다시 실행 (`start_simulator.bat` 는 자동으로 종료하고 다시 켬)
 
-## 다른 PC(SSAFY 등)로 옮기기
+## 여러 PC에서 코드 맞추기 (git)
 
-1. `ssafy_race_kit.zip` 을 그 PC의 SSAFY 폴더(`MyCar_...` 와 시뮬레이터가 있는 폴더)에 풀기
-2. `workspace\setup_python.bat` → `start_simulator.bat` → `workspace\run_bot.bat`
-- 키트에는 SSAFY 제공 파일이 들어 있지 않습니다. `setup_python.bat` 이 그 PC의 템플릿에서 복사합니다
-- 학습값(`memory_*.json`)도 같이 옮기면 처음부터 학습된 차 특성으로 달립니다
+| 언제 | VS Code | 터미널 (workspace 폴더에서) |
+|---|---|---|
+| 작업 시작 전: 최신 코드 받기 | 소스 제어(Ctrl+Shift+G) → **변경 내용 동기화** | `git pull` |
+| 고친 뒤: 올리기 | 소스 제어에서 메시지 쓰고 **커밋** → **변경 내용 동기화** | `git add -A` → `git commit -m "무엇을 왜 바꿨는지"` → `git push` |
+
+- **작업을 시작하기 전에 항상 먼저 pull 합니다.** 두 PC에서 같은 파일을 따로 고치면 충돌이 납니다.
+- 학습값(`memory_*.json`)과 로그는 git 으로 옮겨지지 않습니다. 다른 PC의 학습값을 쓰려면 파일을 직접 복사합니다.
+- 여러 사람이 쓰는 PC(SSAFY 등)라면 사용 후 제어판 → 자격 증명 관리자 → Windows 자격 증명에서 `git:https://github.com` 을 지웁니다.
+
+**이미 `workspace` 폴더가 있는 PC를 저장소에 처음 연결할 때** (예전 키트로 쓰던 PC)
+
+VS Code 를 닫고, `workspace` 가 들어 있는 폴더에서 PowerShell 로:
+```
+Rename-Item workspace workspace_old
+git clone https://github.com/JaeYunAn/SSAFY_Race_Winter.git workspace
+Copy-Item -Recurse workspace_old\.venv, workspace_old\DrivingInterface, workspace_old\logs workspace\
+Copy-Item workspace_old\my_car_basic.py, workspace_old\my_car_template.py, workspace_old\memory_*.json workspace\
+git diff --no-index workspace_old\my_car.py workspace\my_car.py
+```
+- 마지막 줄에서 아무것도 안 나오면 예전 `my_car.py` 와 저장소 것이 같습니다. 다르면 예전 것에만 있는 수정이 있다는 뜻이니 확인하고 옮깁니다.
+- `.venv` 를 옮긴 뒤 실행이 안 되면 `workspace\setup_python.bat` 을 한 번 실행합니다.
+- `workspace_old` 는 확인이 끝나면 지워도 됩니다.
 
 ## 문제 해결
 
@@ -94,4 +133,4 @@
 | `settings.json` 을 못 찾는다는 오류 | `start_simulator.bat` 를 한 번 실행하면 `문서\AirSim` 폴더가 만들어짐 |
 | 봇이 안 움직임 | 시뮬레이터를 먼저 켜고 창 오른쪽 위에 `Car1` 이 보이는지 확인 |
 
-> 대회 가이드 PDF는 대외비입니다. GitHub 등에 올리지 마세요 (`.gitignore` 에 `*.pdf` 포함).
+> 대회 가이드 PDF는 대외비입니다. GitHub 등에 올리지 마세요 (`.gitignore` 에 `*.pdf` 포함). 저장소는 비공개로 유지합니다.

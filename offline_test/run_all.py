@@ -67,6 +67,10 @@ CASES = [
                                   phys=dict(pedal_lag=0.25, brake=13.0, drive_gap=1.5, mu_long=13.0))),
     ("실제 차 흉내 (ssafy 1랩)", dict(track_name="ssafy", laps=1,
                                   phys=dict(pedal_lag=0.25, brake=13.0, drive_gap=1.5, mu_long=13.0))),
+    # 조향까지 실제처럼 (조향 반응 지연 0.3초, 최대 조향각 작음 → 조향 1당 곡률 약 0.056): 직선 흔들림 점검용
+    ("실제 차 흉내 + 조향 지연 (germany 1랩)", dict(track_name="germany", laps=1,
+                                         phys=dict(pedal_lag=0.25, brake=13.0, drive_gap=1.5, mu_long=13.0,
+                                                   steer_lag=0.3, max_steer=0.25))),
     # 시뮬레이터가 잠깐 멈추는 경우 (실측 1.1초×2). 0.8초로 해서 drive_controller 의 '속도 10번 같으면 리셋'은 피함
     ("시뮬레이터 멈춤 0.8초×3 (basic 2랩)", dict(track_name="basic", laps=2,
                                           phys=dict(freeze=[(12.0, 0.8), (25.0, 0.8), (40.0, 0.8)]))),

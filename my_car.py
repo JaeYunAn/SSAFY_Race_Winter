@@ -124,6 +124,7 @@ class Config:
     steer_gain_init: float = 0.2        # 조향 1당 곡률(1/m). 바퀴 최대 각 약 40~45° 기준 추정
     steer_lag_match: float = 0.15       # 조향→측정 곡률 지연 추정(초)
     a_cmd_smooth: float = 0.5           # 가감속 명령 거르기 (1=안 거름)
+    steer_smith: float = 0.30           # 조향 지연 보상 창 최대(초): 이 시간 안에 보낸 목표 곡률은 '아직 안 돈 몫'으로 예측에 더함. 0 이면 끔
     speed_lag: float = 0.25             # 스로틀·브레이크가 실제로 듣기까지 걸리는 시간(초). 2026-11-25 Map 10 실측 0.22~0.33
     gap_comp: bool = True               # 브레이크 뒤 구동 공백 보상 (제동 끝 무렵 목표를 학습값만큼 올림). 끄려면 False
     gap_max: float = 4.0                # 구동 공백 보상 학습값 최대 (m/s). 실측 평균 약 3.3
@@ -1062,6 +1063,8 @@ class RaceBrain:
         self.integ = 0.0
         self.kappa_meas = 0.0
         self.kappa_des = 0.0
+        self.kdes_sent: List[Tuple[float, float, float]] = []   # 최근 보낸 목표 곡률 (시각, 곡률, 프레임 간격)
+        self.smith_w = 0.0                                       # 조향 지연 보상을 섞는 비율 (0~1)
         self.psi_rate = 0.0
         self.slip_frames = 0
         self.grow_frames = 0
@@ -1079,7 +1082,7 @@ class RaceBrain:
         self.lag_sxx = [0.0] * len(self.lag_taus)
         self.lag_sxy = [0.0] * len(self.lag_taus)
         self.lag_syy = 0.0
-        self.lag_best = 1
+        self.lag_best = int(clamp(getattr(self, "mem_lag_best", 1), 0, len(self.lag_taus) - 1))   # 메모리에서 이어받음
         self.a_cmd_f = 0.0
         self.acc_sent: List[Tuple[float, float, float]] = []   # 최근에 보낸 가감속 명령 (시각, 기대 가속도, 프레임 간격)
         self.v_pred = 0.0
@@ -1170,6 +1173,8 @@ class RaceBrain:
             self.steer_gain.from_dict(sg)
         self.mem_auto_sign = m.get("auto_sign", 1.0)
         self.gap_dv = float(m.get("gap_dv", 0.0))
+        if m.get("lag_best") is not None:
+            self.mem_lag_best = int(m["lag_best"])          # 학습한 조향 지연 후보 번호 (차 특성)
         if m.get("brake_cap"):
             self.brake_cap = float(m["brake_cap"])
         if not same_map:
@@ -1191,7 +1196,7 @@ class RaceBrain:
             "grip": self.grip.to_dict(),
             "steer": self.steer_gain.to_dict(), "decel": self.decel.to_dict(), "auto_sign": self.auto_sign,
             "phantoms": [[round(a, 1), round(b, 2)] for a, b in self.phantoms],
-            "gap_dv": round(self.gap_dv, 3), "brake_cap": round(self.brake_cap, 3),
+            "gap_dv": round(self.gap_dv, 3), "brake_cap": round(self.brake_cap, 3), "lag_best": self.lag_best,
         }
 
     def save_memory(self, path: Optional[str] = None) -> None:
@@ -1318,6 +1323,7 @@ class RaceBrain:
             self.integ = 0.0
             self.a_cmd_f = 0.0
             self.acc_sent = []
+            self.kdes_sent = []
             self.gap_track = None
             self.brk_v0 = None
             self.planner.prev_abs = []
@@ -1386,6 +1392,7 @@ class RaceBrain:
         out = self._recovery(fr, dt)
         if out is not None:
             self.acc_sent = []                       # 복구 중 명령은 지연 예측에 쓰지 않음
+            self.kdes_sent = []
             self.last_recover_t = self.t
             self.gap_track = None
             self.brk_v0 = None
@@ -1419,10 +1426,45 @@ class RaceBrain:
         v = max(fr.v, 0.0)
         # 지연 보상: moving_angle 은 반 프레임 늦은 값이고, 이번 명령은 다음 0.1초 동안 적용됨
         #  → 명령이 실제로 듣는 시점(약 τ초 뒤)의 내 위치·방향을 예측해서 그 자리에서 추종
+        # 직선 흔들림 방지 (조향 스미스 예측기): 조향 명령이 실제 곡률로 나타나기까지 약 0.44초 (2026-11-25 Map 10).
+        #  예전에는 지금 회전 속도로 0.15초만 내다봐서, 이미 보냈지만 아직 안 돈 조향을 모르고 계속 더 꺾다가 넘어감
+        #  → 직선에서 약 1.3초 주기로 좌우 흔들림(조향 ±0.15~0.29), 빠를수록 커짐.
+        #  이제 최근 steer_smith 초 동안 보낸 목표 곡률만큼 '앞으로 더 돌 것'으로 보고 그 자세에서 목표점을 잡음.
+        #  (측정 곡률을 쓰면 잡음이 커지고, 예측 시간만 늘리면 더 흔들려서 이 방식을 고름)
+        #  장애물·다른 차가 가까우면 끔: 조향이 빠른 차에서는 덜 꺾게 되어 회피가 늦어질 수 있음
+        #  비정상 자세(역주행, 46° 넘게 틀어짐, 복구 직후, 도로 끝 근처)에서도 끔
+        normal_pose = (fr.moving_forward and abs(fr.psi) < 0.8 and self.t - self.last_recover_t > 1.5
+                       and abs(fr.n) < fr.half - 1.0)            # 도로 끝 근처·바깥이면 예전처럼 빨리 돌아옴
+        clear_road = (not any(0.0 < d < 80.0 and abs(m - fr.n) < 6.0 for d, m in fr.obstacles)
+                      and not any(-10.0 < d < 60.0 for d, _, _ in fr.opponents))
+        # 창 길이 = 학습한 조향 지연(측정 지연 포함) − 0.2초, 최대 steer_smith.
+        #  조향이 빠른 차는 학습 지연이 짧아 창이 거의 0 → 예전과 같음 (빠른 차에 쓰면 코너에서 덜 꺾어 느려짐: 가짜 차 시험)
+        #  실제 차는 0.5초(후보 최대)로 학습됨 → 창 0.3초
+        win = clamp(self.lag_taus[self.lag_best] - 0.2, 0.0, c.steer_smith)
+        # 예전 방식 예측 (0.15초, 지금 회전 속도 유지)
         tau = 0.5 * dt + 0.5 * dt + 0.05
         psi_p = fr.psi + psi_rate * tau
         d0 = v * tau * math.cos(fr.psi)
         n_p = fr.n + v * tau * math.sin(fr.psi + 0.5 * psi_rate * tau)
+        # 켜고 끌 때 자세 예측이 갑자기 바뀌지 않게 섞는 비율을 천천히 바꿈 (켤 때 0.5초, 끌 때 0.3초)
+        w_tgt = 1.0 if (win >= 0.95 * dt and normal_pose and clear_road) else 0.0   # 창에 명령이 한 프레임 이상 들어갈 때만
+        rate = dt / 0.5 if w_tgt > self.smith_w else dt / 0.3
+        self.smith_w = clamp(self.smith_w + clamp(w_tgt - self.smith_w, -rate, rate), 0.0, 1.0)
+        if self.smith_w > 0.0:
+            t2 = 0.5 * dt                                      # moving_angle 은 반 프레임 늦은 값
+            psi_s = fr.psi + psi_rate * t2
+            d_s = v * t2 * math.cos(fr.psi)
+            n_s = fr.n + v * t2 * math.sin(fr.psi + 0.5 * psi_rate * t2)
+            for (ts, kd, hh) in self.kdes_sent:
+                if ts > self.t - win - 1e-6:
+                    kr = geo.curvature(d_s, d_s + max(v * hh, 0.1))
+                    psi_s += v * (kd - kr) * hh
+                    n_s += v * hh * math.sin(psi_s)
+                    d_s += v * hh * math.cos(psi_s)
+            w = self.smith_w
+            psi_p = (1.0 - w) * psi_p + w * psi_s
+            n_p = (1.0 - w) * n_p + w * n_s
+            d0 = (1.0 - w) * d0 + w * d_s
         cx0, cy0 = geo.path_point(d0, n_p)
         head = geo.heading(d0) + psi_p
         Ld = clamp(0.32 * v + 5.0, 6.0, 32.0)
@@ -1439,6 +1481,9 @@ class RaceBrain:
         k_lim = 1.08 * self.a_lat * self.grip.get(self.s_key) / max(v * v, 1.0)
         grip_capped = abs(self.kappa_des) > k_lim
         self.kappa_des = clamp(self.kappa_des, -k_lim, k_lim)
+        self.kdes_sent.append((self.t, self.kappa_des, dt))   # 조향 지연 예측용 기록
+        if len(self.kdes_sent) > 8:
+            self.kdes_sent.pop(0)
         g = self.steer_gain.get(v)
         steer_ff = self.kappa_des / max(g, 1e-3)
         steer_ff += self._sysid_weave(fr)
@@ -1566,7 +1611,7 @@ class RaceBrain:
             "st": round(steer, 3), "th": round(throttle, 3), "br": round(brake, 3),
             "state": self.state, "mode": self.plan_mode, "fac": round(self.factor, 3),
             "vref": self.debug.get("v_ref"), "vpred": round(self.v_pred * 3.6, 1), "gapdv": round(self.gap_dv * 3.6, 1),
-            "bcap": round(self.brake_cap, 2),
+            "bcap": round(self.brake_cap, 2), "slag": self.lag_taus[self.lag_best], "smw": round(self.smith_w, 2),
             "kdes": round(self.kappa_des, 5), "kmeas": round(self.kappa_meas, 5),
             "alat": round(self.a_lat, 2), "abrk": round(self.a_brake, 2), "gain": round(self.steer_gain.get(max(fr.v, 0.0)), 4),
             "tp": fr.teleport, "stale": self.stale_now,

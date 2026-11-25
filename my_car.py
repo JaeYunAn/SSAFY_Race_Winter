@@ -131,8 +131,12 @@ class Config:
     reverse_brake: bool = False         # True: 강한 제동 때 throttle −1(후진 기어)도 같이 사용 (7기 팀 관찰)
 
     # 전략
-    factor_plan_a: float = 0.92
-    factor_plan_b: float = 0.96
+    # 슈마허 + 알베르토 플랜 A/B 속도 배율 (학습한 그립에 곱함). 0.92/0.96 → 0.96/1.00 (2026-11-25)
+    #  근거: Map 10 두 랩 동안 미끄러짐 0회, 코너 탈출 옆 가속 10.6 m/s² 까지 깨끗, 풀브레이크+옆 가속 합 약 13 m/s².
+    #  a_lat 자체가 '깨끗하게 써 본 값의 5% 위'까지만 오르는 보수적 학습이라 배율까지 낮게 잡을 필요는 적음.
+    #  미끄러지면 해밀턴 그립 지도·AIMD 가 그 자리/전체를 깎음
+    factor_plan_a: float = 0.96
+    factor_plan_b: float = 1.00
     factor_manage: float = 0.88
     factor_calm: float = 0.82
     factor_rate: float = 0.08           # 세나: 배율이 1초에 바뀔 수 있는 최대치

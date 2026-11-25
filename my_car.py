@@ -119,6 +119,10 @@ class Config:
     # 초기 추정값 (일부러 보수적으로, 달리면서 실측으로 바뀜)
     a_lat_init: float = 9.0
     a_brake_init: float = 8.0
+    # 학습값 상한 (2026-11-25 Map 31·61·161 실측): 옆 그립 학습값이 13.5 를 넘으면서 벽·장애물 충돌이 시작됐고
+    #  (Map 10 깨끗한 주행 11.4), 브레이크 1당 감속은 Map 10 실측 13~15. 불러온 값과 학습 중 값 모두 이 안으로 묶음
+    a_lat_max: float = 14.0
+    a_brake_max: float = 18.0
     a_drive_init: float = 6.0
     drag_init: float = 0.001
     steer_gain_init: float = 0.2        # 조향 1당 곡률(1/m). 바퀴 최대 각 약 40~45° 기준 추정
@@ -1064,6 +1068,7 @@ class RaceBrain:
         self.kappa_meas = 0.0
         self.kappa_des = 0.0
         self.kdes_sent: List[Tuple[float, float, float]] = []   # 최근 보낸 목표 곡률 (시각, 곡률, 프레임 간격)
+        self.kdes_lagged = 0.0                                   # 학습한 조향 지연만큼 늦춘 목표 곡률 (그립 학습용)
         self.smith_w = 0.0                                       # 조향 지연 보상을 섞는 비율 (0~1)
         self.psi_rate = 0.0
         self.slip_frames = 0
@@ -1178,6 +1183,11 @@ class RaceBrain:
             self.mem_lag_best = int(m["lag_best"])          # 학습한 조향 지연 후보 번호 (차 특성)
         if m.get("brake_cap"):
             self.brake_cap = float(m["brake_cap"])
+        # 예전 코드가 부풀려 저장한 값(2026-11-25: 옆 그립 22, 브레이크 25)을 그대로 믿지 않음
+        self.a_lat = min(self.a_lat, self.cfg.a_lat_max)
+        self.a_brake = min(self.a_brake, self.cfg.a_brake_max)
+        if getattr(self, "brake_cap", None):
+            self.brake_cap = min(self.brake_cap, self.cfg.a_brake_max)
         if not same_map:
             return
         self.lap_len = m.get("lap_len")
@@ -1716,7 +1726,10 @@ class RaceBrain:
         self.hist.append((self.t, v, self.prev_throttle, self.prev_brake))
         if len(self.hist) > 7:
             self.hist.pop(0)
-        if len(self.hist) == 7 and straight:
+        # 충돌·복구 직후 1.5초는 제동·가속 학습에서 뺌: 2026-11-25 Map 61·161 에서 충돌 순간 감속을 브레이크 힘으로 배워
+        #  브레이크 1당 감속 15.8 → 25.1, 풀브레이크 모델 37.8 m/s²(약 3.9 g)까지 부풀었음
+        incident = self.t - max(self.last_col_t, self.last_recover_t) < 1.5
+        if len(self.hist) == 7 and straight and not incident:
             h = self.hist[1:]
             t0, v0 = h[0][0], h[0][1]
             t1, v1 = h[-1][0], h[-1][1]
@@ -1766,6 +1779,7 @@ class RaceBrain:
                     if 2.0 < meas < 30.0:
                         w = 0.3 * min(1.0, br_m)
                         self.a_brake += w * (meas - self.a_brake)
+                self.a_brake = min(self.a_brake, self.cfg.a_brake_max)
             if max(brs) == 0 and min(ths) >= 0 and max(ths) - min(ths) < 0.1 and vm > 3:
                 self.drive_model.update(sum(ths) / len(ths), vm * vm, acc)
                 self.a_drive, self.drag = self.drive_model.a_drive, self.drive_model.drag
@@ -1778,9 +1792,23 @@ class RaceBrain:
         slipping = v > 8 and a_lat_meas > 0.75 * load and (short_pred or short_des)
         tracking = abs(self.kappa_meas) >= 0.95 * abs(self.kappa_des)
         self.slip_frames = self.slip_frames + 1 if slipping else 0
-        clean_hi = not slipping and tracking and a_lat_meas > 0.9 * load
+        # 그립을 올리는 '깨끗한 고하중'은 정말로 목표만큼 돌았을 때만 셈 (2026-11-25 Map 31·61·161 실측으로 고침)
+        #  예전: '실제 곡률 ≥ 목표의 0.95배'만 봄 → 조향을 이미 풀었는데 조향 지연(약 0.5초) 때문에 아직 도는 순간
+        #  (목표 옆 가속 13 → 2, 실측 12~15)과 스핀·충돌 중 옆 가속(39~63 m/s²)까지 세어 옆 그립이 11.4 → 22 로 부풀었고,
+        #  그 값으로 코너·장애물 회피를 시도하다 미끄러지고 부딪힘
+        #  → 학습한 조향 지연만큼 늦춘 목표 곡률과 실제 곡률이 같은 방향·0.85~1.25배, 조향이 0.4초 동안 일정,
+        #    진행 방향 오차 10° 안, 충돌·복구 뒤 3초, 측정값이 지금 학습값의 1.3배 이하일 때만
+        #  실제 차는 이렇게 '제대로 따라가며 계획 하중을 다 쓰는' 순간이 드물어서(Map 10 네 번 주행에 0.9배 넘는 프레임 10개)
+        #  기준을 계획 하중의 0.85배·0.2초로 둠. 실제 로그 재생: Map 10 은 9.0 → 10.0, Map 31·61·161 은 11.4 → 최대 11.9
+        #  (예전 규칙은 같은 로그에서 13.5 / 18.6 / 21.8 까지 올라감)
+        self.kdes_lagged += (self.kappa_des - self.kdes_lagged) * (1.0 - math.exp(-dt / self.lag_taus[self.lag_best]))
+        kl = self.kdes_lagged
+        follows = kl * self.kappa_meas > 0 and 0.85 * abs(kl) <= abs(self.kappa_meas) <= 1.25 * abs(kl)
+        calm = (abs(fr.psi) < 10.0 * DEG and self.t - self.last_col_t > 3.0 and self.t - self.last_recover_t > 3.0
+                and a_lat_meas < 1.3 * self.a_lat)
+        clean_hi = not slipping and tracking and follows and steady and calm and a_lat_meas > 0.85 * load
         self.grow_frames = self.grow_frames + 1 if clean_hi else 0
-        need = max(3, int(round(0.3 / dt)))              # 0.3초 동안 깨끗하게
+        need = max(2, int(round(0.2 / dt)))              # 0.2초 동안 깨끗하게
         if self.grow_frames >= need:
             self.best_clean = max(self.best_clean, a_lat_meas)
         if self.slip_frames == max(2, int(round(0.3 / self.cfg.dt))):
@@ -1809,7 +1837,7 @@ class RaceBrain:
         elif self.grow_frames >= need and self.t - self.last_grow > 1.0:
             grow = 1.012 if self.global_slips == 0 else 1.004
             # AIMD: 계획 하중을 다 쓰고도 안 미끄러지면 올림. 단, 실제로 깨끗하게 써 본 최대 하중의 5% 위까지만
-            self.a_lat = max(self.a_lat, min(30.0, self.a_lat * grow, self.best_clean * 1.05))
+            self.a_lat = max(self.a_lat, min(self.cfg.a_lat_max, self.a_lat * grow, self.best_clean * 1.05))
             self.last_grow = self.t
 
     # ---------------- 복구 ----------------

@@ -21,6 +21,8 @@ SSAFY 싸피레이스(AirSim 기반 3D 주행 시뮬레이터 "Algo")에서 차�
      - my_car.py 를 고쳤으면 2번의 오프라인 시험 비교까지 끝낸 뒤 커밋하고, 본문에 전후 결과(완주 시간·충돌·벌점·예외)를 적는다.
      - push 전에 `git fetch` 로 다른 PC의 변경을 확인하고, 있으면 먼저 받는다. 충돌이 나면 push 하지 말고 사용자에게 알린다.
      - `.claude/settings.json` 이 `git fetch`·`git pull`·`git push` (와일드카드 없이 정확한 형태만) 를 허용한다. 이 명령들은 `&&` 로 다른 명령과 묶지 말고 **단독으로** 실행한다 (묶으면 허용 규칙에 안 맞아 자동 모드 검사에 막힘).
+     - 이 규칙은 Claude Code 를 연 폴더의 `.claude` 에서 읽힌다. 상위 폴더(`SSAFY_RACE`)에서 열었으면 `workspace/.claude/settings.json` 이 적용되지 않아
+       push 가 막힌다 → 그 폴더의 `.claude/settings.local.json` 에 같은 허용 규칙을 넣는다 (저장소 밖, PC마다 따로. 2026-11-25 이 PC에 넣음)
    - 학습값(`memory*.json`)·로그(`logs/`)는 git 에 없어서 PC마다 다르다. 로그를 분석할 때는 이 PC에서 달린 기록인지 생각한다.
 
 | 전략 | 코드 위치 |

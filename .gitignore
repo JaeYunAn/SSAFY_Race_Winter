@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+logs/
+memory*.json
+offline_test/_mem_test.json
+offline_test/run_all_result.json
+# SSAFY 제공 파일 (각 PC에서 setup_python.bat 이 복사해 옴)
+DrivingInterface/
+my_car_basic.py
+my_car_template.py
+# 대회 가이드 PDF 는 대외비 — 저장소에 올리지 말 것
+*.pdf

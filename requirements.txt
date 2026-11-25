@@ -1,0 +1,4 @@
+# packages used by DrivingInterface (airsim itself is bundled in the folder)
+numpy
+msgpack-rpc-python
+pywin32

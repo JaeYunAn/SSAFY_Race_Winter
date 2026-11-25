@@ -125,6 +125,8 @@ class Config:
     steer_lag_match: float = 0.15       # 조향→측정 곡률 지연 추정(초)
     a_cmd_smooth: float = 0.5           # 가감속 명령 거르기 (1=안 거름)
     speed_lag: float = 0.25             # 스로틀·브레이크가 실제로 듣기까지 걸리는 시간(초). 2026-11-25 Map 10 실측 0.22~0.33
+    gap_comp: bool = True               # 브레이크 뒤 구동 공백 보상 (제동 끝 무렵 목표를 학습값만큼 올림). 끄려면 False
+    gap_max: float = 4.0                # 구동 공백 보상 학습값 최대 (m/s). 실측 평균 약 3.3
     sysid_weave: bool = True            # 출발 직후 미세 위빙으로 조향 특성 파악 (메모리 있으면 생략)
     sysid_amp: float = 0.05
     sysid_freq: float = 0.6
@@ -652,6 +654,7 @@ class Profile:
     d: List[float]
     v: List[float]
     t: List[float]
+    lim: List[float] = field(default_factory=list)   # 지점별 옆 그립 한계 속도 (제동·가속 패스 전)
 
 
 class SpeedPlanner:
@@ -680,6 +683,7 @@ class SpeedPlanner:
             if k < len(plan.blocked) and plan.blocked[k]:
                 vk = 0.0
             v.append(vk)
+        v_lim = list(v)
         # 후진 패스: 가장 늦은 브레이킹 지점 (베르스타펜) + 코너 안 브레이크는 마찰원만큼만
         for k in range(N - 2, -1, -1):
             lat = v[k + 1] ** 2 * abs(kap[k])
@@ -708,7 +712,7 @@ class SpeedPlanner:
         t = [0.0]
         for k in range(N - 1):
             t.append(t[-1] + ds / max(0.5 * (v[k] + v[k + 1]), 1.0))
-        return Profile(d_list, v, t)
+        return Profile(d_list, v, t, v_lim)
 
 
 # =====================================================================
@@ -1075,6 +1079,13 @@ class RaceBrain:
         self.acc_sent: List[Tuple[float, float, float]] = []   # 최근에 보낸 가감속 명령 (시각, 기대 가속도, 프레임 간격)
         self.v_pred = 0.0
         self.last_recover_t = -9.0
+        # 브레이크 뒤 구동 공백 학습 (gap_dv 는 차 특성이라 메모리에서 이어받음)
+        if not hasattr(self, "gap_dv"):
+            self.gap_dv = 0.0                  # 놓은 뒤 계획보다 더 떨어지는 속도 (m/s)
+        self.brk_v0: Optional[float] = None    # 이번 감속을 시작할 때 속도
+        self.brk_last_t = -9.0                 # 마지막으로 브레이크를 밟은 시각
+        self.gap_track: Optional[List[float]] = None   # [놓은 시각, 계획 최저 속도, 지금까지 실제 최저 속도]
+        self.gap_events = 0
         self.prev_sig: Optional[Tuple[Any, Any, Tuple[Any, ...]]] = None   # 직전 프레임 센서 (멈춤 감지용)
         self.stale_now = False
         self.stale_frames = 0
@@ -1150,6 +1161,7 @@ class RaceBrain:
         if sg and "Sxx" in sg:
             self.steer_gain.from_dict(sg)
         self.mem_auto_sign = m.get("auto_sign", 1.0)
+        self.gap_dv = float(m.get("gap_dv", 0.0))
         if not same_map:
             return
         self.lap_len = m.get("lap_len")
@@ -1169,6 +1181,7 @@ class RaceBrain:
             "grip": self.grip.to_dict(),
             "steer": self.steer_gain.to_dict(), "decel": self.decel.to_dict(), "auto_sign": self.auto_sign,
             "phantoms": [[round(a, 1), round(b, 2)] for a, b in self.phantoms],
+            "gap_dv": round(self.gap_dv, 3),
         }
 
     def save_memory(self, path: Optional[str] = None) -> None:
@@ -1295,6 +1308,8 @@ class RaceBrain:
             self.integ = 0.0
             self.a_cmd_f = 0.0
             self.acc_sent = []
+            self.gap_track = None
+            self.brk_v0 = None
             self.planner.prev_abs = []
             self.hist = []
 
@@ -1362,6 +1377,8 @@ class RaceBrain:
         if out is not None:
             self.acc_sent = []                       # 복구 중 명령은 지연 예측에 쓰지 않음
             self.last_recover_t = self.t
+            self.gap_track = None
+            self.brk_v0 = None
             self.prev = fr
             self.prev_steer, self.prev_throttle, self.prev_brake = out
             self._log(fr, *out)
@@ -1436,8 +1453,27 @@ class RaceBrain:
         self.v_pred = v_c
         d_c = max(v + 0.5 * inc, 0.0) * tau_v
         d_ref = max(v_c * 0.3, 2.0)
-        v_ref = lerp_list(prof.d, prof.v, min(d_c + d_ref, prof.d[-1]))
-        a_raw = (v_ref * v_ref - v_c * v_c) / (2 * d_ref) + 1.0 * (v_ref - v_c)
+        d_t = min(d_c + d_ref, prof.d[-1])
+        v_ref = lerp_list(prof.d, prof.v, d_t)
+        # 베르스타펜 학습 (브레이크 뒤 구동 공백): 크게 감속한 뒤 브레이크를 놓으면 약 1초 동안 풀스로틀이어도
+        #  구동력이 안 나온다 (2026-11-25 Map 10: 직선에서도 놓은 뒤 0~0.5초 −4.3, 0.5~1초 −1.9 m/s², 자동 변속기로 보임)
+        #  → 코너마다 계획보다 평균 12 km/h 더 느려짐. 크게 감속하는 중(감속 시작보다 10 km/h 넘게 느려짐)과
+        #    놓은 뒤 1.2초 동안은 목표를 '앞 1.2초 동안 계획한 최저 속도 + 학습값 gap_dv' 로 삼아
+        #    (원래 목표보다 높을 때만) 제동 끝 무렵에 그만큼 일찍 놓는다. 제동 구간 한가운데에서는
+        #    1.2초 뒤 계획 속도가 훨씬 낮아 올라가지 않음. 그 지점의 옆 그립 한계 속도는 넘지 않음 (코너 정점에서는 안 올림)
+        depth = (self.brk_v0 - v) if self.brk_v0 is not None else 0.0
+        braking_seq = self.prev_brake > 0.05 or self.t - self.brk_last_t < 1.2
+        w_gap = clamp((depth - 2.8) / 2.8, 0.0, 1.0) if (braking_seq and tau_v > 0 and not near_block) else 0.0
+        v_ref_gap = v_ref
+        gap_capped = False
+        if c.gap_comp and w_gap > 0.0 and self.gap_dv > 0.0:
+            hz = v * 1.2
+            v_min_ahead = min(lerp_list(prof.d, prof.v, min(d_t + hz * q, prof.d[-1])) for q in (0.0, 0.25, 0.5, 0.75, 1.0))
+            v_lim_t = lerp_list(prof.d, prof.lim, d_t) if prof.lim else v_ref
+            want = v_min_ahead + w_gap * self.gap_dv
+            gap_capped = want > v_lim_t                  # 그립 한계에 막혀 다 못 올림
+            v_ref_gap = max(v_ref, min(want, v_lim_t))
+        a_raw = (v_ref_gap * v_ref_gap - v_c * v_c) / (2 * d_ref) + 1.0 * (v_ref_gap - v_c)
         self.a_cmd_f += c.a_cmd_smooth * (a_raw - self.a_cmd_f)
         if a_raw < self.a_cmd_f - 2.0 or (a_raw < 0.0 < self.a_cmd_f):     # 새 제동 요구는 바로 반영
             self.a_cmd_f = a_raw
@@ -1453,6 +1489,26 @@ class RaceBrain:
                 throttle = -1.0                          # 후진 기어 제동 (선택)
         if fr.v < -0.3:                                  # 아직 뒤로 가고 있으면 멈추고 출발
             throttle, brake = 0.0, 1.0
+        # 구동 공백 학습: 크게 감속한 뒤 놓은 순간 '앞 1.2초 동안 계획한 최저 속도'를 적어 두고,
+        #  1.2초 동안 실제 최저 속도와 비교해 gap_dv 를 고침 (공백이 없는 차·맵이면 0 으로 줄어듦)
+        if brake > 0.05:
+            if self.brk_v0 is None or self.t - self.brk_last_t > 1.5:
+                self.brk_v0 = v                            # 새 감속 시작
+            self.brk_last_t = self.t
+            if self.gap_track is not None:                 # 놓은 뒤 다시 밟음 → 지금까지로 마감
+                self._gap_finish()
+        else:
+            if (self.prev_brake > 0.05 and depth > 5.6 and tau_v > 0 and not near_block
+                    and self.gap_track is None):
+                hz = v * 1.2
+                tgt = min(lerp_list(prof.d, prof.v, min(d_c + hz * q, prof.d[-1])) for q in (0.0, 0.25, 0.5, 0.75, 1.0))
+                self.gap_track = [self.t, tgt, v, 1.0 if gap_capped else 0.0]
+            if self.gap_track is not None:
+                self.gap_track[2] = min(self.gap_track[2], v)
+                if self.t - self.gap_track[0] > 1.2:
+                    self._gap_finish()
+            if self.t - self.brk_last_t > 1.5:
+                self.brk_v0 = None
         # 이번 명령이 낼 것으로 기대하는 가속도를 기록 (다음 프레임들의 지연 예측에 씀)
         self.acc_sent.append((self.t, throttle * self.a_drive - brake * self.a_brake - drag_a, dt))
         if len(self.acc_sent) > 10:
@@ -1469,6 +1525,18 @@ class RaceBrain:
         self._log(fr, steer, throttle, brake)
         return self._emit(steer, throttle, brake)
 
+    def _gap_finish(self) -> None:
+        """구동 공백 학습 한 번 마감: 계획한 최저 속도보다 실제로 더 떨어진 만큼 gap_dv 를 올리고, 덜 떨어졌으면 내림."""
+        t0, tgt, vmin, capped = self.gap_track
+        self.gap_track = None
+        if self.t - t0 < 0.4:                 # 놓자마자 다시 밟은 경우는 판단하기 이름
+            return
+        err = tgt - vmin
+        if err > 0 and capped > 0.5:          # 그립 한계에 막혀 다 못 올린 코너: 올려도 못 쓰므로 키우지 않음 (와인드업 방지)
+            return
+        self.gap_dv = clamp(self.gap_dv + 0.4 * err, 0.0, self.cfg.gap_max)
+        self.gap_events += 1
+
     def _log(self, fr: Frame, steer: float, throttle: float, brake: float) -> None:
         if not self.logger:
             return
@@ -1480,7 +1548,7 @@ class RaceBrain:
             "opp": [[round(d, 1), round(m, 2), round(sp * 3.6, 1)] for d, m, sp in fr.opponents[:2]],
             "st": round(steer, 3), "th": round(throttle, 3), "br": round(brake, 3),
             "state": self.state, "mode": self.plan_mode, "fac": round(self.factor, 3),
-            "vref": self.debug.get("v_ref"), "vpred": round(self.v_pred * 3.6, 1),
+            "vref": self.debug.get("v_ref"), "vpred": round(self.v_pred * 3.6, 1), "gapdv": round(self.gap_dv * 3.6, 1),
             "kdes": round(self.kappa_des, 5), "kmeas": round(self.kappa_meas, 5),
             "alat": round(self.a_lat, 2), "abrk": round(self.a_brake, 2), "gain": round(self.steer_gain.get(max(fr.v, 0.0)), 4),
             "tp": fr.teleport, "stale": self.stale_now,

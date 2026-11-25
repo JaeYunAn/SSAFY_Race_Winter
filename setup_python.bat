@@ -53,14 +53,8 @@ echo Using Python: %PY37%
 if exist ".venv\Scripts\python.exe" goto :venv_ok
 echo Creating .venv ...
 "%PY37%" -m venv .venv
-if not exist ".venv\Scripts\python.exe" goto :no_template
-echo.
-echo [ERROR] SSAFY template not found (MyCar_...\Template_Python\Bot_Python\DrivingInterface).
-echo Put this workspace folder inside the folder that contains the unzipped MyCar_xxxx folder, then run again.
-pause
-exit /b 1
+if not exist ".venv\Scripts\python.exe" goto :venv_fail
 
-:venv_fail
 :venv_ok
 ".venv\Scripts\python.exe" -m pip install --upgrade pip
 ".venv\Scripts\python.exe" -m pip install -r requirements.txt
@@ -80,6 +74,13 @@ echo Automatic install failed. Download "Windows x86-64 executable installer" fr
 echo install it, then run this file again.
 echo https://www.python.org/downloads/release/python-379/
 start "" "https://www.python.org/downloads/release/python-379/"
+pause
+exit /b 1
+
+:no_template
+echo.
+echo [ERROR] SSAFY template not found (MyCar_...\Template_Python\Bot_Python\DrivingInterface).
+echo Put this workspace folder inside the folder that contains the unzipped MyCar_xxxx folder, then run again.
 pause
 exit /b 1
 

@@ -1119,6 +1119,7 @@ class RaceBrain:
         self.smith_w = 0.0                                       # 조향 지연 보상을 섞는 비율 (0~1)
         self.ld_f: Optional[float] = None                        # 조향 목표점까지 거리 (직선 모드에서 길어짐)
         self.straight_w = 0.0
+        self.straight_on = False                                  # 직선 모드가 켜져 있는지 (켜고 끄는 문턱이 다름)
         self.psi_rate = 0.0
         self.slip_frames = 0
         self.grow_frames = 0
@@ -1538,20 +1539,28 @@ class RaceBrain:
         #  → 장애물·다른 차가 없고, 앞 경로가 곧고(계획 곡률 반경 667 m 넘음, 60 m 넘게), 차가 계획 선 가까이(옆 1 m, 방향 3°)면
         #    목표점을 straight_look_t 초 앞(최대 straight_ld_max m, 곧은 거리의 0.9배까지)으로 늘림 → 0.5 m 벗어나도 조향 0.002 수준.
         #    코너가 가까워지면 곧은 거리에 맞춰 줄어들고, 장애물·다른 차가 보이면 0.3초 안에 원래대로
+        #  S2 (2026-11-25 Map 161 실측으로 고침): 빠른 직선의 23%에서만 켜졌음
+        #   ① 계획 곡률 문턱 0.0015 가 계획 안의 0.3 m 정도 작은 옆 조정에도 걸림 (631프레임 중 241) → 0.003 (반경 333 m)
+        #   ② 켜는 조건(방향 3°)을 흔들림 자체가 넘어서 못 켜짐 (145프레임) → 켤 때 4.5°, 켜진 뒤에는 6° 넘어야 끔
+        #   (도로 곡률로 판단하는 방식은 코너 앞 자리 잡기를 못 따라가 조향 지연 가짜 차에서 충돌·조향 이득 학습이 무너져 고르지 않음)
         Ld_t = Ld_n
+        on = False
         if c.straight_mode and normal_pose and v > 22.0:
             busy = (any(-5.0 < d < 150.0 for d, _ in fr.obstacles)
                     or any(-10.0 < d < 150.0 for d, _, _ in fr.opponents))
             if not busy:
                 L_free = plan.d[-1]
                 for dk, kk in zip(plan.d, plan.kappa):
-                    if abs(kk) > 0.0015:
+                    if abs(kk) > 0.003:
                         L_free = dk
                         break
                 e_n = fr.n - plan.n[0]
                 e_psi = fr.psi - math.atan((plan.n[1] - plan.n[0]) / max(plan.d[1] - plan.d[0], 1e-3))
-                if L_free > 60.0 and abs(e_n) < 1.0 and abs(e_psi) < 3.0 * DEG:
+                psi_lim = (6.0 if self.straight_on else 4.5) * DEG
+                on = L_free > 60.0 and abs(e_n) < 1.0 and abs(e_psi) < psi_lim
+                if on:
                     Ld_t = max(Ld_n, min(c.straight_look_t * v, c.straight_ld_max, 0.9 * L_free))
+        self.straight_on = on
         if self.ld_f is None:
             self.ld_f = Ld_n
         self.ld_f = clamp(Ld_t, self.ld_f - 300.0 * dt, self.ld_f + 40.0 * dt)   # 늘 때는 천천히, 줄 때는 빨리

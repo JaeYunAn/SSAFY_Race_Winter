@@ -20,6 +20,7 @@ SSAFY 싸피레이스(AirSim 기반 3D 주행 시뮬레이터 "Algo")에서 차�
      - 커밋 메시지는 한국어로: 첫 줄에 한 줄 요약, 본문에 파일별로 무엇을 왜 바꿨는지.
      - my_car.py 를 고쳤으면 2번의 오프라인 시험 비교까지 끝낸 뒤 커밋하고, 본문에 전후 결과(완주 시간·충돌·벌점·예외)를 적는다.
      - push 전에 `git fetch` 로 다른 PC의 변경을 확인하고, 있으면 먼저 받는다. 충돌이 나면 push 하지 말고 사용자에게 알린다.
+     - `.claude/settings.json` 이 `git fetch`·`git pull`·`git push` (와일드카드 없이 정확한 형태만) 를 허용한다. 이 명령들은 `&&` 로 다른 명령과 묶지 말고 **단독으로** 실행한다 (묶으면 허용 규칙에 안 맞아 자동 모드 검사에 막힘).
    - 학습값(`memory*.json`)·로그(`logs/`)는 git 에 없어서 PC마다 다르다. 로그를 분석할 때는 이 PC에서 달린 기록인지 생각한다.
 
 | 전략 | 코드 위치 |
@@ -40,7 +41,7 @@ SSAFY 싸피레이스(AirSim 기반 3D 주행 시뮬레이터 "Algo")에서 차�
 - `DrivingInterface/` 는 대회 제공 원본이다. 서버는 원본을 쓰므로 **절대 고치지 않는다.** (센서 계산 방식을 확인할 때 읽기만 한다)
 - `my_car_basic.py`(대회 기본 예제), `my_car_template.py`(빈 템플릿)는 참고용이다.
 - `offline_test/` 는 시뮬레이터 없이 my_car.py 를 시험하는 도구다 (가짜 물리 + 진짜 drive_controller.py).
-- git 저장소에 들어 있는 것: my_car.py, offline_test/, .bat 스크립트, README.md, CLAUDE.md, requirements.txt, .gitignore, .gitattributes
+- git 저장소에 들어 있는 것: my_car.py, offline_test/, .bat 스크립트, README.md, CLAUDE.md, requirements.txt, .gitignore, .gitattributes, .claude/settings.json (Claude Code 권한 설정)
 - `.gitignore` 로 빼는 것: `DrivingInterface/`, `my_car_basic.py`, `my_car_template.py`, `.venv/`, `logs/`, `memory*.json`, `*.pdf`. 이 줄들을 지우지 않는다.
 - `.gitattributes` 는 `.bat` 을 CRLF 로 고정한다 (LF 면 `goto` 가 깨질 수 있음).
 

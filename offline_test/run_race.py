@@ -38,6 +38,7 @@ def run(track_name, laps=1, battle=None, mem=None, log=None, phys=None, limit=60
     cars = {"Car1": (0.0, 0.0)} if not battle else {"Car1": (0.0, -4.0), "Car2": (0.0, 4.0)}
     settings = {"SettingsVersion": 1.2, "SimMode": "Car", "Algo": {"Map": "10"},
                 "Vehicles": {k: {"VehicleType": "PhysXCar", "X": v[0], "Y": v[1], "Z": 0} for k, v in cars.items()}}
+    os.makedirs(os.path.join(docs, "Airsim"), exist_ok=True)
     with open(docs + "\\Airsim\\settings.json", "w", encoding="utf-8") as f:
         json.dump(settings, f)
     track = fakesim.make_tracks()[track_name]

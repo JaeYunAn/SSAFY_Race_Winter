@@ -1095,7 +1095,8 @@ class RaceBrain:
         self.gap_track: Optional[List[float]] = None   # [놓은 시각, 계획 최저 속도, 지금까지 실제 최저 속도]
         self.gap_events = 0
         # 제동 방향 그립 (타원 마찰원 앞뒤 한계, m/s²). 처음엔 옆 그립과 같게 → 지금까지와 같은 원 모양에서 시작
-        if not getattr(self, "brake_cap", None):
+        #  옆 그립보다 낮은 값으로 시작하지 않음 (예전 오판으로 깎인 저장값 10.38 < 옆 그립 11.42 를 바로잡음)
+        if not getattr(self, "brake_cap", None) or self.brake_cap < self.a_lat:
             self.brake_cap = self.a_lat
         self.prev_sig: Optional[Tuple[Any, Any, Tuple[Any, ...]]] = None   # 직전 프레임 센서 (멈춤 감지용)
         self.stale_now = False
@@ -1743,11 +1744,16 @@ class RaceBrain:
                 # 제동 방향 그립 학습 (타원 마찰원): 실제로 낸 감속을 '순수 제동'으로 환산
                 #  포화(풀브레이크, 또는 명령한 만큼 감속이 안 나옴 = 그립 한계)면 그 값이 한계,
                 #  여유가 있었으면 '적어도 이만큼은 됨' (한 번에 5% 넘게는 안 올림)
+                #  '명령만큼 안 나옴' 판정은 지연 앞뒤 1프레임까지 브레이크가 거의 일정할 때만 함:
+                #  2026-11-25 Map 10 에서 브레이크를 0.33 → 0.64 → 0.47 로 빠르게 바꾸는 중에 지연이 1프레임 어긋난 것을
+                #  그립 한계로 오인해 제동 그립을 10.9 → 9.0 으로 깎았음
                 if vmb > 8 and 0.0 < tire < 30.0 and self.t - self.last_col_t > 1.5:
                     a_y = max(self.a_lat * self.grip.get(self.s_key), 1.0)
                     r = min(a_lat_meas / a_y, 0.9)
                     eq = tire / math.sqrt(1.0 - r * r)
-                    if min(cmd) > 0.95 or tire < 0.85 * br_m * self.a_brake:
+                    cmd_w = [x[3] for x in self.hist[max(0, n_h - 4 - lag_n):n_h - lag_n + 1]]
+                    steady_w = max(cmd_w) - min(cmd_w) < 0.15
+                    if min(cmd) > 0.95 or (steady_w and tire < 0.85 * br_m * self.a_brake):
                         self.brake_cap += 0.3 * (eq - self.brake_cap)
                     elif br_m > 0.3:
                         self.brake_cap = max(self.brake_cap, min(eq, self.brake_cap * 1.05))

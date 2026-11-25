@@ -62,6 +62,11 @@ CASES = [
     # 실제 시뮬레이터처럼 페달이 늦게 듣는 차 (2026-11-25 Map 10 실측: 지연 0.22~0.33초, 브레이크 1당 약 13 m/s²)
     ("페달 지연 0.25초 차 (basic 2랩)", dict(track_name="basic", laps=2, phys=dict(pedal_lag=0.25, brake=13.0))),
     ("페달 지연 0.25초 차 (ssafy 1랩)", dict(track_name="ssafy", laps=1, phys=dict(pedal_lag=0.25, brake=13.0))),
+    # 실제 차에 가장 가까운 흉내 (2026-11-25 Map 10 실측): 페달 지연 + 브레이크 뒤 구동 공백 1.5초 + 타원 그립(앞뒤 13)
+    ("실제 차 흉내 (basic 2랩)", dict(track_name="basic", laps=2,
+                                  phys=dict(pedal_lag=0.25, brake=13.0, drive_gap=1.5, mu_long=13.0))),
+    ("실제 차 흉내 (ssafy 1랩)", dict(track_name="ssafy", laps=1,
+                                  phys=dict(pedal_lag=0.25, brake=13.0, drive_gap=1.5, mu_long=13.0))),
     # 시뮬레이터가 잠깐 멈추는 경우 (실측 1.1초×2). 0.8초로 해서 drive_controller 의 '속도 10번 같으면 리셋'은 피함
     ("시뮬레이터 멈춤 0.8초×3 (basic 2랩)", dict(track_name="basic", laps=2,
                                           phys=dict(freeze=[(12.0, 0.8), (25.0, 0.8), (40.0, 0.8)]))),

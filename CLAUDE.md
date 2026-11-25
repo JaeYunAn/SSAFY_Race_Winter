@@ -80,8 +80,9 @@ SSAFY 싸피레이스(AirSim 기반 3D 주행 시뮬레이터 "Algo")에서 차�
 - 봇 실행 (시뮬레이터가 켜져 있을 때만): `run_bot.bat` 또는 `./.venv/Scripts/python.exe my_car.py`
 - **코드를 고친 뒤에는 반드시 오프라인 시험을 돌린다** (시뮬레이터 불필요, 약 1분):
   `./.venv/Scripts/python.exe offline_test/run_all.py`
-  - 시험 19개의 완주 시간·충돌·벌점·리셋·예외 합계가 나온다. 고치기 전과 비교해서 보고한다.
+  - 시험 21개의 완주 시간·충돌·벌점·리셋·예외 합계가 나온다. 고치기 전과 비교해서 보고한다.
   - 기본 가짜 물리는 페달이 즉시 듣는다. 실제처럼 페달이 늦게 듣는 경우는 '페달 지연 0.25초 차' 시험 2개(`phys` 의 `pedal_lag`)로 본다.
+  - '실제 차 흉내' 시험 2개는 페달 지연 + 브레이크 뒤 구동 공백(`drive_gap`) + 타원 그립(`mu_long`, 앞뒤 13 > 옆 10)을 함께 넣은 가장 실제에 가까운 차다.
   - '시뮬레이터 멈춤 0.8초×3' 시험(`phys` 의 `freeze`)은 실제로 있었던 시뮬레이터 정지를 흉내 낸다 (완주 시간에서 멈춘 시간은 뺌).
   - 트랙 하나만: `./.venv/Scripts/python.exe offline_test/run_race.py basic 1` (트랙: basic, speed, ssafy, germany, hidden)
   - 출력에서 UnicodeEncodeError 가 나면 환경 변수 `PYTHONIOENCODING=utf-8` 을 붙여 실행한다.

@@ -203,6 +203,8 @@ class Car:
 
     def reset(self):
         self.pedal_q = []                 # 페달(스로틀·브레이크) 지연용 명령 기록 (시각, 스로틀, 브레이크)
+        self.brk_v0 = None                # 구동 공백 흉내: 브레이크를 밟기 시작할 때 속도
+        self.gap_t0 = -99.0               # 구동 공백이 시작된 시각
         self.x, self.y = self.reset_pos
         self.yaw = 0.0
         self.v = 0.0
@@ -250,15 +252,43 @@ class Car:
         else:
             a_drive = max(th, 0.0) * min(p["a_max"], p["power"] / max(abs(v), 3.0))
         a_brake = br * p["brake"]
+        # 실제 시뮬레이터 흉내: 크게 감속(4 m/s 넘게)한 뒤 브레이크를 놓으면 drive_gap 초 동안 구동력이 안 나옴
+        #  (2026-11-25 Map 10 실측: 놓은 뒤 0~1초 풀스로틀인데 −4.3 → −1.9 m/s², 1~1.5초 +1.8, 자동 변속기로 보임)
+        gap_extra = 0.0
+        gap = p.get("drive_gap", 0.0)
+        if gap > 0 and not rev:
+            now = WORLD.t if WORLD else 0.0
+            if br > 0.05:
+                if self.brk_v0 is None:
+                    self.brk_v0 = v
+            elif self.brk_v0 is not None:
+                if self.brk_v0 - v > 4.0:
+                    self.gap_t0 = now
+                self.brk_v0 = None
+            since = now - self.gap_t0
+            if since < gap * 2.0 / 3.0:
+                a_drive = 0.0
+                gap_extra = 1.5 if v > 0.5 else 0.0     # 엔진 브레이크
+            elif since < gap:
+                a_drive *= (since - gap * 2.0 / 3.0) / (gap / 3.0)
         sgn = 1.0 if v > 0.05 else (-1.0 if v < -0.05 else 0.0)
         a_tire = a_drive - a_brake * sgn
         a_lat = v * v * kap
-        tot = math.hypot(a_tire, a_lat)
-        if tot > mu:
-            sc = mu / tot
-            a_tire *= sc
-            kap *= sc
-        a = a_tire - p["drag"] * v * abs(v) - p["roll"] * sgn - (1.5 * sgn if off else 0.0)
+        mu_long = p.get("mu_long", 0.0)
+        if mu_long > 0 and not off:
+            # 타원 그립: 앞뒤(제동·가속) 한계 mu_long, 옆 한계 mu (실측: 제동+옆 가속 합 약 13 > 옆 그립 약 11)
+            ratio = (a_tire / mu_long) ** 2 + (a_lat / mu) ** 2
+            if ratio > 1.0:
+                sc = 1.0 / math.sqrt(ratio)
+                a_tire *= sc
+                kap *= sc
+        else:
+            tot = math.hypot(a_tire, a_lat)
+            if tot > mu:
+                sc = mu / tot
+                a_tire *= sc
+                kap *= sc
+        a = a_tire - p["drag"] * v * abs(v) - p["roll"] * sgn - (1.5 * sgn if off else 0.0) - gap_extra * sgn
         nv = v + a * h
         if sgn != 0 and nv * v < 0 and abs(a_drive) < 1e-6:
             nv = 0.0                                   # 브레이크로 0을 넘어 뒤로 가지 않음

@@ -1442,12 +1442,15 @@ class RaceBrain:
         #  → 직선에서 약 1.3초 주기로 좌우 흔들림(조향 ±0.15~0.29), 빠를수록 커짐.
         #  이제 최근 steer_smith 초 동안 보낸 목표 곡률만큼 '앞으로 더 돌 것'으로 보고 그 자세에서 목표점을 잡음.
         #  (측정 곡률을 쓰면 잡음이 커지고, 예측 시간만 늘리면 더 흔들려서 이 방식을 고름)
-        #  장애물·다른 차가 가까우면 끔: 조향이 빠른 차에서는 덜 꺾게 되어 회피가 늦어질 수 있음
+        #  다른 차가 가까우면 끔 (같은 AI끼리 배틀에서 서로 늦게 비켜 부딪힘: 가짜 차 시험)
+        #  장애물 근처에서는 끄지 않음 (2026-11-25 Map 61·161 실측으로 고침): 예전에는 장애물이 80 m·옆 6 m 안이면 꺼서
+        #  피하는 순간마다 보상이 사라지고, 경계에서 켜졌다 꺼졌다 하며 조향이 튐(+0.08 → −0.28) → 0.5초 늦게 장애물 쪽으로 휘어
+        #  부딪힘(Map 61 t122·t241, Map 161 t49.7). 장애물 근처 진행 방향 8° 넘는 비율 25~30% (장애물 없는 직선 4~6%)
+        #  조향이 빠른 차는 학습 지연이 짧아 창이 0 이라 영향 없음
         #  비정상 자세(역주행, 46° 넘게 틀어짐, 복구 직후, 도로 끝 근처)에서도 끔
         normal_pose = (fr.moving_forward and abs(fr.psi) < 0.8 and self.t - self.last_recover_t > 1.5
                        and abs(fr.n) < fr.half - 1.0)            # 도로 끝 근처·바깥이면 예전처럼 빨리 돌아옴
-        clear_road = (not any(0.0 < d < 80.0 and abs(m - fr.n) < 6.0 for d, m in fr.obstacles)
-                      and not any(-10.0 < d < 60.0 for d, _, _ in fr.opponents))
+        clear_road = not any(-10.0 < d < 60.0 for d, _, _ in fr.opponents)
         # 창 길이 = 학습한 조향 지연(측정 지연 포함) − 0.2초, 최대 steer_smith.
         #  조향이 빠른 차는 학습 지연이 짧아 창이 거의 0 → 예전과 같음 (빠른 차에 쓰면 코너에서 덜 꺾어 느려짐: 가짜 차 시험)
         #  실제 차는 0.5초(후보 최대)로 학습됨 → 창 0.3초
@@ -1499,8 +1502,15 @@ class RaceBrain:
         steer_ff = self.kappa_des / max(g, 1e-3)
         steer_ff += self._sysid_weave(fr)
         sat = abs(steer_ff + self.integ) >= 1.0 or grip_capped
+        # 적분은 '지연만큼 늦춘 목표 곡률'과 실제 곡률을 비교 (2026-11-25 고침): 실제 곡률은 약 0.4초 전 명령의 결과라
+        #  지금 목표와 비교하면 코너 진입·회피 때마다 지연 차이를 '이득 오차'로 쌓아 다음 조향을 상쇄함
+        #  (가짜 차 시험: 목표 −0.017 인데 조향 +0.04 → 도로 밖). 정상 상태의 이득 오차만 고치도록.
+        #  단 조향 이득을 아직 덜 배웠을 때(서버 첫 랩: 초기값 0.2, 실제 약 0.06)는 지금 목표와 비교해 모자란 조향을
+        #  빨리 채움 (늦춘 목표만 쓰면 가짜 차 basic 에서 코너 진입이 늦어 52.5 → 58.2초, 벌점). 배운 양(조향² 합 0.3)에 따라 섞음
+        conf = clamp(self.steer_gain.Sxx / 0.3, 0.0, 1.0)
+        k_ref = self.kappa_des + conf * (self.kdes_lagged - self.kappa_des)
         if v > 4.0 and not sat:
-            self.integ += 1.2 * (self.kappa_des - self.kappa_meas) / max(g, 1e-3) * dt
+            self.integ += 1.2 * (k_ref - self.kappa_meas) / max(g, 1e-3) * dt
         self.integ = clamp(self.integ * (1 - 0.3 * dt), -0.5, 0.5)
         steer = clamp(steer_ff + self.integ, -1.0, 1.0)
 
@@ -1696,8 +1706,16 @@ class RaceBrain:
                 and abs(self.steer_lagged) < 0.95 and self.road_steady and steady
                 and v > 5.0 and self.t - self.last_col_t > 1.5 and fr.moving_forward):
             self.steer_gain.update(v, self.steer_lagged, self.kappa_meas)
-            # 지연 후보별 상관 (곡률형 기준) → 가장 잘 맞는 지연 선택
-            lam = 0.995
+        # 지연 후보별 상관 (곡률형 기준) → 가장 잘 맞는 지연 선택. 조건을 이득 학습과 분리 (2026-11-25 실측으로 고침)
+        #  예전: 이득 학습과 같은 조건(조향이 0.4초 동안 거의 일정 + 사전 이득 0.2 기준 요구 하중 < 0.95×그립)에서만 골라서
+        #  고속에서는 조향이 거의 0인 직선 잡음만 들어옴 → 후보가 주행마다 0.08~0.5초로 흔들림
+        #  (Map 161 같은 장애물 쌍을 0.08 일 때는 부딪히고 0.5 일 때는 통과). 지연은 조향이 '바뀔 때'만 구별됨
+        #  → 타이어가 선형 영역(측정 옆 가속 < 0.65×그립)이면 조향이 바뀌는 중에도 쓰고, 잊는 속도를 늦추고(0.995 → 0.998)
+        #    새 후보가 지금 것보다 상관이 0.02 넘게 좋을 때만 바꿈.
+        #  실제 로그 재생: 모든 맵에서 0.5초가 84~93%, 주행당 바꿈 1~3번 (Map 10 실측 약 0.44초와 일치)
+        if (v > 5.0 and fr.moving_forward and self.t - self.last_col_t > 1.5 and self.t - self.last_recover_t > 1.5
+                and a_lat_meas < 0.65 * self.a_lat and abs(fr.psi) < 20.0 * DEG and abs(self.prev_steer) < 0.95):
+            lam = 0.998
             y = self.kappa_meas
             self.lag_syy = lam * self.lag_syy + y * y
             best_r, best_j = -9.0, self.lag_best
@@ -1709,7 +1727,7 @@ class RaceBrain:
                 rs.append(r)
                 if r > best_r:
                     best_r, best_j = r, j
-            if self.lag_sxx[best_j] > 0.01 and best_j != self.lag_best:
+            if self.lag_sxx[best_j] > 0.01 and best_j != self.lag_best and best_r > rs[self.lag_best] + 0.02:
                 self.lag_best = best_j
             # 조향 부호 자동 판별: 어떤 지연으로 봐도 꺾은 방향과 반대로 돌면 부호를 뒤집고 다시 배움
             #  (출발 직후 40초 안에서만, 충분한 데이터가 쌓였을 때만)
@@ -1788,9 +1806,12 @@ class RaceBrain:
         local = self.grip.get(self.s_key)
         load = self.a_lat * self.factor * local
         short_pred = k_pred * self.kappa_meas > 0 and abs(k_pred) > 1.2 * abs(self.kappa_meas) + 0.002
-        short_des = self.kappa_des * self.kappa_meas > 0 and abs(self.kappa_des) > 1.12 * abs(self.kappa_meas) + 0.001
+        # 목표 곡률도 조향 지연만큼 늦춘 값과 비교 (2026-11-25): 적분을 지연 맞춘 목표로 바꾼 뒤로는 실제 곡률이 지금 목표를
+        #  억지로 따라가지 않으므로, 지금 목표와 비교하면 '지연 차이'를 미끄러짐으로 오인해 그립을 깎음 (가짜 차 basic 10.9 → 7.8)
+        self.kdes_lagged += (self.kappa_des - self.kdes_lagged) * (1.0 - math.exp(-dt / self.lag_taus[self.lag_best]))
+        kl = self.kdes_lagged
+        short_des = kl * self.kappa_meas > 0 and abs(kl) > 1.12 * abs(self.kappa_meas) + 0.001
         slipping = v > 8 and a_lat_meas > 0.75 * load and (short_pred or short_des)
-        tracking = abs(self.kappa_meas) >= 0.95 * abs(self.kappa_des)
         self.slip_frames = self.slip_frames + 1 if slipping else 0
         # 그립을 올리는 '깨끗한 고하중'은 정말로 목표만큼 돌았을 때만 셈 (2026-11-25 Map 31·61·161 실측으로 고침)
         #  예전: '실제 곡률 ≥ 목표의 0.95배'만 봄 → 조향을 이미 풀었는데 조향 지연(약 0.5초) 때문에 아직 도는 순간
@@ -1799,14 +1820,14 @@ class RaceBrain:
         #  → 학습한 조향 지연만큼 늦춘 목표 곡률과 실제 곡률이 같은 방향·0.85~1.25배, 조향이 0.4초 동안 일정,
         #    진행 방향 오차 10° 안, 충돌·복구 뒤 3초, 측정값이 지금 학습값의 1.3배 이하일 때만
         #  실제 차는 이렇게 '제대로 따라가며 계획 하중을 다 쓰는' 순간이 드물어서(Map 10 네 번 주행에 0.9배 넘는 프레임 10개)
-        #  기준을 계획 하중의 0.85배·0.2초로 둠. 실제 로그 재생: Map 10 은 9.0 → 10.0, Map 31·61·161 은 11.4 → 최대 11.9
+        #  기준을 계획 하중의 0.85배·0.2초로 둠. 실제 로그 재생: Map 10 은 9.0 → 10.0, Map 31·61·161 은 11.4 → 최대 12.1
         #  (예전 규칙은 같은 로그에서 13.5 / 18.6 / 21.8 까지 올라감)
-        self.kdes_lagged += (self.kappa_des - self.kdes_lagged) * (1.0 - math.exp(-dt / self.lag_taus[self.lag_best]))
-        kl = self.kdes_lagged
         follows = kl * self.kappa_meas > 0 and 0.85 * abs(kl) <= abs(self.kappa_meas) <= 1.25 * abs(kl)
         calm = (abs(fr.psi) < 10.0 * DEG and self.t - self.last_col_t > 3.0 and self.t - self.last_recover_t > 3.0
                 and a_lat_meas < 1.3 * self.a_lat)
-        clean_hi = not slipping and tracking and follows and steady and calm and a_lat_meas > 0.85 * load
+        #  ('지금 목표의 0.95배 이상' 조건은 뺌: 적분이 지연 맞춘 목표를 따르게 된 뒤로는 지연 차이만으로 자주 떨어져
+        #   가짜 차 basic 2랩 그립이 10.9 → 9.9 로 덜 오름. 실제 로그 재생에서도 11.4 → 최대 12.1)
+        clean_hi = not slipping and follows and steady and calm and a_lat_meas > 0.85 * load
         self.grow_frames = self.grow_frames + 1 if clean_hi else 0
         need = max(2, int(round(0.2 / dt)))              # 0.2초 동안 깨끗하게
         if self.grow_frames >= need:

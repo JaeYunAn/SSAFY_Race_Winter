@@ -71,6 +71,11 @@ CASES = [
     ("실제 차 흉내 + 조향 지연 (germany 1랩)", dict(track_name="germany", laps=1,
                                          phys=dict(pedal_lag=0.25, brake=13.0, drive_gap=1.5, mu_long=13.0,
                                                    steer_lag=0.3, max_steer=0.25))),
+    # 조향 '순수 지연'까지 실제처럼 (2026-11-25: 명령 → 측정 곡률 약 0.44초 중 차 쪽 약 0.2초 순수 지연 + 0.1초 1차 지연).
+    #  장애물 많은 트랙에서 회피 중 좌우 휘청임·조향 지연 보상 점검용 (가짜 물리가 혼돈적이라 한 번 결과는 참고만)
+    ("실제 차 흉내 + 조향 순수 지연 (ssafy 1랩, 장애물 14개)", dict(track_name="ssafy", laps=1,
+                                                   phys=dict(pedal_lag=0.25, brake=13.0, drive_gap=1.5, mu_long=13.0,
+                                                             steer_delay=0.2, steer_lag=0.1, max_steer=0.25))),
     # 시뮬레이터가 잠깐 멈추는 경우 (실측 1.1초×2). 0.8초로 해서 drive_controller 의 '속도 10번 같으면 리셋'은 피함
     ("시뮬레이터 멈춤 0.8초×3 (basic 2랩)", dict(track_name="basic", laps=2,
                                           phys=dict(freeze=[(12.0, 0.8), (25.0, 0.8), (40.0, 0.8)]))),

@@ -203,6 +203,7 @@ class Car:
 
     def reset(self):
         self.pedal_q = []                 # 페달(스로틀·브레이크) 지연용 명령 기록 (시각, 스로틀, 브레이크)
+        self.steer_q = []                 # 조향 순수 지연용 명령 기록 (시각, 조향)
         self.brk_v0 = None                # 구동 공백 흉내: 브레이크를 밟기 시작할 때 속도
         self.gap_t0 = -99.0               # 구동 공백이 시작된 시각
         self.x, self.y = self.reset_pos
@@ -237,6 +238,15 @@ class Car:
                 th, br = self.pedal_q[0][1], self.pedal_q[0][2]
             else:
                 th, br = 0.0, 0.0
+        sd = p.get("steer_delay", 0.0)
+        if sd > 0:
+            # 실제 시뮬레이터 흉내: 조향 명령이 sd 초 늦게 바퀴에 전달 (2026-11-25 Map 10 실측: 명령 → 측정 곡률 약 0.44초,
+            #  그중 측정 쪽 지연을 빼면 차 쪽 약 0.3초 순수 지연 + 0.1초 1차 지연)
+            now = WORLD.t if WORLD else 0.0
+            self.steer_q.append((now, st))
+            while len(self.steer_q) > 1 and self.steer_q[1][0] <= now - sd:
+                self.steer_q.pop(0)
+            st = self.steer_q[0][1] if self.steer_q[0][0] <= now - sd else 0.0
         self.steer_act += (st - self.steer_act) * (1 - math.exp(-h / p["steer_lag"]))
         v = self.v
         _, lat = self.track.project(self.x, self.y, self.idx)

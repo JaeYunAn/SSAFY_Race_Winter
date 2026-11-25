@@ -131,6 +131,9 @@ class Config:
     steer_gain_init: float = 0.2        # 조향 1당 곡률(1/m). 바퀴 최대 각 약 40~45° 기준 추정
     steer_lag_match: float = 0.15       # 조향→측정 곡률 지연 추정(초)
     a_cmd_smooth: float = 0.5           # 가감속 명령 거르기 (1=안 거름)
+    straight_mode: bool = True          # 직선 모드: 곧은 길에서는 먼 점(straight_look_t 초 앞)을 겨누고 천천히만 고침. 끄려면 False
+    straight_look_t: float = 2.0
+    straight_ld_max: float = 120.0
     steer_smith: float = 0.30           # 조향 지연 보상 창 최대(초): 이 시간 안에 보낸 목표 곡률은 '아직 안 돈 몫'으로 예측에 더함. 0 이면 끔
     speed_lag: float = 0.25             # 스로틀·브레이크가 실제로 듣기까지 걸리는 시간(초). 2026-11-25 Map 10 실측 0.22~0.33
     gap_comp: bool = True               # 브레이크 뒤 구동 공백 보상 (제동 끝 무렵 목표를 학습값만큼 올림). 끄려면 False
@@ -1114,6 +1117,8 @@ class RaceBrain:
         self.kdes_sent: List[Tuple[float, float, float]] = []   # 최근 보낸 목표 곡률 (시각, 곡률, 프레임 간격)
         self.kdes_lagged = 0.0                                   # 학습한 조향 지연만큼 늦춘 목표 곡률 (그립 학습용)
         self.smith_w = 0.0                                       # 조향 지연 보상을 섞는 비율 (0~1)
+        self.ld_f: Optional[float] = None                        # 조향 목표점까지 거리 (직선 모드에서 길어짐)
+        self.straight_w = 0.0
         self.psi_rate = 0.0
         self.slip_frames = 0
         self.grow_frames = 0
@@ -1526,7 +1531,32 @@ class RaceBrain:
             d0 = (1.0 - w) * d0 + w * d_s
         cx0, cy0 = geo.path_point(d0, n_p)
         head = geo.heading(d0) + psi_p
-        Ld = clamp(0.32 * v + 5.0, 6.0, 32.0)
+        Ld_n = clamp(0.32 * v + 5.0, 6.0, 32.0)
+        # 직선 모드 (작대기처럼 1자로, 2026-11-25 Map 161 실측으로 넣음): 계획이 1자로 고정된 뒤에도 차가 그 선을 중심으로
+        #  약 2.4초 주기로 흔들림 (150 km/h ±0.35 m, 185 km/h ±0.9 m·±3°, 조향 ±0.17 → 직선에서 옆 가속 약 11 m/s²).
+        #  목표점 거리 32 m 는 50 m/s 에서 '선으로 되돌아오는 주기'가 약 2.8초라 조향 지연 0.5초에 여유가 거의 없음.
+        #  → 장애물·다른 차가 없고, 앞 경로가 곧고(계획 곡률 반경 667 m 넘음, 60 m 넘게), 차가 계획 선 가까이(옆 1 m, 방향 3°)면
+        #    목표점을 straight_look_t 초 앞(최대 straight_ld_max m, 곧은 거리의 0.9배까지)으로 늘림 → 0.5 m 벗어나도 조향 0.002 수준.
+        #    코너가 가까워지면 곧은 거리에 맞춰 줄어들고, 장애물·다른 차가 보이면 0.3초 안에 원래대로
+        Ld_t = Ld_n
+        if c.straight_mode and normal_pose and v > 22.0:
+            busy = (any(-5.0 < d < 150.0 for d, _ in fr.obstacles)
+                    or any(-10.0 < d < 150.0 for d, _, _ in fr.opponents))
+            if not busy:
+                L_free = plan.d[-1]
+                for dk, kk in zip(plan.d, plan.kappa):
+                    if abs(kk) > 0.0015:
+                        L_free = dk
+                        break
+                e_n = fr.n - plan.n[0]
+                e_psi = fr.psi - math.atan((plan.n[1] - plan.n[0]) / max(plan.d[1] - plan.d[0], 1e-3))
+                if L_free > 60.0 and abs(e_n) < 1.0 and abs(e_psi) < 3.0 * DEG:
+                    Ld_t = max(Ld_n, min(c.straight_look_t * v, c.straight_ld_max, 0.9 * L_free))
+        if self.ld_f is None:
+            self.ld_f = Ld_n
+        self.ld_f = clamp(Ld_t, self.ld_f - 300.0 * dt, self.ld_f + 40.0 * dt)   # 늘 때는 천천히, 줄 때는 빨리
+        Ld = max(self.ld_f, 6.0)
+        self.straight_w = clamp((Ld - Ld_n) / 40.0, 0.0, 1.0)
         n_at = lerp_list(plan.d, plan.n, d0 + Ld)
         px, py = geo.path_point(d0 + Ld, n_at)
         dx, dy = px - cx0, py - cy0
@@ -1555,7 +1585,8 @@ class RaceBrain:
         conf = clamp(self.steer_gain.Sxx / 0.3, 0.0, 1.0)
         k_ref = self.kappa_des + conf * (self.kdes_lagged - self.kappa_des)
         if v > 4.0 and not sat:
-            self.integ += 1.2 * (k_ref - self.kappa_meas) / max(g, 1e-3) * dt
+            # 직선 모드에서는 적분도 거의 멈춤 (먼 점을 겨누는 느린 보정과 싸우지 않게)
+            self.integ += 1.2 * (1.0 - 0.8 * self.straight_w) * (k_ref - self.kappa_meas) / max(g, 1e-3) * dt
         self.integ = clamp(self.integ * (1 - 0.3 * dt), -0.5, 0.5)
         steer = clamp(steer_ff + self.integ, -1.0, 1.0)
 
@@ -1678,6 +1709,7 @@ class RaceBrain:
             "state": self.state, "mode": self.plan_mode, "fac": round(self.factor, 3),
             "vref": self.debug.get("v_ref"), "vpred": round(self.v_pred * 3.6, 1), "gapdv": round(self.gap_dv * 3.6, 1),
             "bcap": round(self.brake_cap, 2), "slag": self.lag_taus[self.lag_best], "smw": round(self.smith_w, 2),
+            "ld": round(self.ld_f, 1) if self.ld_f is not None else None,
             "kdes": round(self.kappa_des, 5), "kmeas": round(self.kappa_meas, 5),
             "alat": round(self.a_lat, 2), "abrk": round(self.a_brake, 2), "gain": round(self.steer_gain.get(max(fr.v, 0.0)), 4),
             "tp": fr.teleport, "stale": self.stale_now, "anc": round(self.planner.anchor_w, 2),

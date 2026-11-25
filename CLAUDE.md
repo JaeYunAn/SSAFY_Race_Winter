@@ -14,7 +14,7 @@ SSAFY 싸피레이스(AirSim 기반 3D 주행 시뮬레이터 "Algo")에서 차�
 5. 아래 '대회 규칙'과 '코드 조건'을 지킨다: my_car.py 만 수정, `half_road_limit` 외 부모 멤버 금지, 좌표 하드코딩 금지, Python 3.7 문법, 서버에서 파일 쓰기 금지.
 6. 큰 변경 전에는 `my_car.py` 를 `backup/my_car_YYYYMMDD_HHMMSS.py` 로 복사해 둔다.
 7. my_car.py 의 레전드 전략은 지우거나 끄지 않는다.
-8. 코드는 GitHub 비공개 저장소 `JaeYunAn/SSAFY_Race_Winter` (이 workspace 폴더가 루트, 브랜치 `main`) 로 집 노트북과 SSAFY PC 사이에서 맞춘다.
+8. 코드는 GitHub 공개 저장소 `JaeYunAn/SSAFY_Race_Winter` (이 workspace 폴더가 루트, 브랜치 `main`) 로 집 노트북과 SSAFY PC 사이에서 맞춘다.
    - 작업을 시작할 때 `git status` 와 `git pull` 로 다른 PC에서 올린 변경이 있는지 먼저 확인한다.
    - **저장소 안의 파일을 고칠 때마다 커밋하고 바로 push 한다** (사용자 지시, 2026-11-25). 따로 묻지 않는다.
      - 커밋 메시지는 한국어로: 첫 줄에 한 줄 요약, 본문에 파일별로 무엇을 왜 바꿨는지.
@@ -207,4 +207,4 @@ SSAFY 싸피레이스(AirSim 기반 3D 주행 시뮬레이터 "Algo")에서 차�
 ## 보안
 
 - 대회 가이드 PDF(`..\*.pdf`)는 대외비다. 내용을 외부로 옮기거나 저장소에 올리지 않는다.
-- GitHub 저장소는 비공개로 유지한다. SSAFY 제공 파일(`DrivingInterface/`, 기본 예제)도 올리지 않는다.
+- GitHub 저장소는 공개 저장소다. 공개 저장소이므로 대회 가이드 PDF 내용과 SSAFY 제공 파일(`DrivingInterface/`, 기본 예제)은 절대 올리지 않는다.

@@ -2,7 +2,7 @@
 
 원본 템플릿(`MyCar_20261113`)은 그대로 두고, 이 폴더에서 코드를 고치고 실행합니다.
 
-이 폴더는 GitHub 비공개 저장소 [JaeYunAn/SSAFY_Race_Winter](https://github.com/JaeYunAn/SSAFY_Race_Winter) (브랜치 `main`)와 연결되어 있습니다. 코드는 git 으로 여러 PC에서 맞추고, SSAFY 제공 파일·학습값·로그는 PC마다 따로 둡니다.
+이 폴더는 GitHub 공개 저장소 [JaeYunAn/SSAFY_Race_Winter](https://github.com/JaeYunAn/SSAFY_Race_Winter) (브랜치 `main`)와 연결되어 있습니다. 코드는 git 으로 여러 PC에서 맞추고, SSAFY 제공 파일·학습값·로그는 PC마다 따로 둡니다.
 
 ## 폴더 구성
 
@@ -35,7 +35,7 @@
    git clone https://github.com/JaeYunAn/SSAFY_Race_Winter.git workspace
    ```
    - git 이 없으면 [git-scm.com](https://git-scm.com) 에서 받아 기본값으로 설치하고, 처음 한 번 `git config --global user.name "이름"`, `git config --global user.email "GitHub 이메일"`
-   - 비공개 저장소라서 처음에 GitHub 로그인 창이 뜹니다 (저장소에 초대된 계정만 받을 수 있음)
+   - 공개 저장소라서 받기(clone·pull)는 로그인 없이 됩니다. 처음 push 할 때 GitHub 로그인 창이 뜹니다 (쓰기 권한이 있는 계정만 올릴 수 있음)
    - `start_simulator.bat` 은 저장소에 없으므로 작업 키트에서 꺼내 `workspace` 바로 위 폴더에 둡니다
 2. `workspace\setup_python.bat` 더블클릭
    - 이 PC의 SSAFY 템플릿(`MyCar_...\Template_Python`)에서 `DrivingInterface`, 기본 예제를 자동으로 복사합니다 (`workspace` 의 바로 위·그 위 폴더에서 찾음)
@@ -133,4 +133,4 @@ git diff --no-index workspace_old\my_car.py workspace\my_car.py
 | `settings.json` 을 못 찾는다는 오류 | `start_simulator.bat` 를 한 번 실행하면 `문서\AirSim` 폴더가 만들어짐 |
 | 봇이 안 움직임 | 시뮬레이터를 먼저 켜고 창 오른쪽 위에 `Car1` 이 보이는지 확인 |
 
-> 대회 가이드 PDF는 대외비입니다. GitHub 등에 올리지 마세요 (`.gitignore` 에 `*.pdf` 포함). 저장소는 비공개로 유지합니다.
+> 대회 가이드 PDF는 대외비입니다. GitHub 등에 올리지 마세요 (`.gitignore` 에 `*.pdf` 포함). 공개 저장소이므로 대회 가이드 PDF 내용과 SSAFY 제공 파일은 절대 올리지 않습니다.

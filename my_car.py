@@ -131,6 +131,11 @@ class Config:
     steer_gain_init: float = 0.2        # 조향 1당 곡률(1/m). 바퀴 최대 각 약 40~45° 기준 추정
     steer_lag_match: float = 0.15       # 조향→측정 곡률 지연 추정(초)
     a_cmd_smooth: float = 0.5           # 가감속 명령 거르기 (1=안 거름)
+    # 출발 모드 (2026-11-26 Map 61·70·71 실측으로 넣음): 출발 지점에서 첫 경유점을 지나기 전, API 가 '다음 길이 150° 꺾임'처럼
+    #  엉터리 도로 정보를 주면(다른 맵은 0~2°) 첫 경유점을 지날 때까지 조향 0 으로 곧게 출발. launch_max_t 초가 지나면 원래대로
+    launch_mode: bool = True
+    launch_glitch_deg: float = 60.0
+    launch_max_t: float = 8.0
     straight_mode: bool = True          # 직선 모드: 곧은 길에서는 먼 점(straight_look_t 초 앞)을 겨누고 천천히만 고침. 끄려면 False
     straight_look_t: float = 2.0
     straight_ld_max: float = 120.0
@@ -188,6 +193,7 @@ class Frame:
     n_raw: float = 0.0                        # API to_middle 그대로
     teleport: bool = False                    # 리셋 등으로 위치가 갑자기 바뀜
     lap_len_found: Optional[float] = None     # 이번 프레임에 랩 길이를 알아냈으면 그 값
+    launch_glitch: bool = False               # 첫 경유점 전인데 도로 정보가 엉터리 (출발 지점의 경유점 배치 문제)
     time: Optional[float] = None
 
 
@@ -229,6 +235,7 @@ class SsafyAdapter:
         self.resyncs = 0
         self.passes = 0
         self.start_win: Optional[List[int]] = None
+        self.start_win_wp = 0
         self.cum_turn = 0
 
     # ---- 구간 기준 직선 대비 매끈한 기준선의 옆 위치 ----
@@ -299,9 +306,14 @@ class SsafyAdapter:
             po = self.prev_th
             if k_pass >= 1:
                 turns = [po[0]] if k_pass == 1 else [po[0], po[1] - po[0]]
+                # 출발 지점 엉터리 각도(2026-11-26 Map 61·70·71: ±150°)는 0 으로: 실제 도로는 10 m 에 60° 넘게 꺾이지 않음.
+                #  그대로 두면 첫 경유점을 지난 뒤에도 '방금 지난 구간 방향'으로 남아 다음 구간 기준선이 휘고,
+                #  랩 길이 감지용 꺾임 합도 360° 에서 150° 어긋나 랩 길이를 못 찾음
+                lim = c.launch_glitch_deg * DEG
+                turns = [tr if abs(tr) <= lim else 0.0 for tr in turns]
                 for tr in turns:
                     self.seq.append(int(round(tr / DEG)))
-                self.prev_seg_rel = -(po[0] if k_pass == 1 else po[1] - po[0])
+                self.prev_seg_rel = -turns[-1]
                 self.passes += k_pass
             else:                                       # 뒤로 경유점을 넘어감 (후진)
                 for _ in range(-k_pass):
@@ -366,8 +378,15 @@ class SsafyAdapter:
             r = s / prog
             self.s_per_prog = r if self.s_per_prog is None else self.s_per_prog + 0.05 * (r - self.s_per_prog)
 
-        if self.start_win is None:
+        # 출발 지점 도로 정보 이상: 첫 경유점을 지나기 전에 다음 구간이 launch_glitch_deg 넘게 꺾였다고 나옴
+        #  (2026-11-26 Map 61·70·71 은 출발 때마다 150°, 다른 맵은 0~2°). 이때는 to_middle·moving_angle 도 엉터리
+        #  (배틀에서는 to_middle 부호까지 뒤집힘 +3.35 → −3.97)
+        launch_glitch = self.passes == 0 and abs(th[0]) > c.launch_glitch_deg * DEG
+        if self.start_win is None and not launch_glitch:
+            # 랩 길이 감지용 '출발 때 본 앞 20구간 각도'. 출발 지점 정보가 엉터리면(모든 값이 엉터리 구간 기준 누적 각도)
+            #  첫 경유점을 지난 뒤에 잡고, 그만큼(start_win_wp 칸)을 랩 길이 계산에서 뺌
             self.start_win = [int(round(a)) for a in ang[:20]]
+            self.start_win_wp = self.wp_count
         if k_pass >= 1:
             self.cum_turn += sum(self.seq[-k_pass:]) if len(self.seq) >= k_pass else 0
         lap_found = None
@@ -377,7 +396,7 @@ class SsafyAdapter:
         return Frame(v=v, n=n, psi=psi, obstacles=obstacles, opponents=opponents,
                      collided=bool(_get(raw, "collided", False)), half=half_limit,
                      knot_d=knot_d, knot_th=knot_th, kr0=kr0, kr_next=kr_next, s=s,
-                     moving_forward=fwd, progress_api=prog, n_raw=tm, teleport=teleport,
+                     moving_forward=fwd, progress_api=prog, n_raw=tm, teleport=teleport, launch_glitch=launch_glitch,
                      lap_len_found=lap_found)
 
     def _detect_lap(self, win: List[int]) -> Optional[float]:
@@ -388,8 +407,8 @@ class SsafyAdapter:
         sw = self.start_win or []
         if (self.wp_count >= 25 and sw and sum(abs(x) for x in sw) >= 15
                 and abs(abs(self.cum_turn) - 360) < 25 and all(abs(a - b) <= 1 for a, b in zip(win, sw))):
-            self.lap_wp = self.wp_count
-            return self.wp_count * self.L
+            self.lap_wp = self.wp_count - self.start_win_wp
+            return self.lap_wp * self.L
         seq = self.seq
         n = len(seq)
         for m in (30, 60, 90):
@@ -1156,6 +1175,7 @@ class RaceBrain:
         self.prev_sig: Optional[Tuple[Any, Any, Tuple[Any, ...]]] = None   # 직전 프레임 센서 (멈춤 감지용)
         self.stale_now = False
         self.stale_frames = 0
+        self.launch_on = False                                   # 출발 모드 중인지 (로그 lch)
         self.wall_prev: Optional[float] = None
         self.wall_dt = c.dt
         self.auto_sign = self.mem_auto_sign
@@ -1377,6 +1397,33 @@ class RaceBrain:
         self.t_move += dt
         self.lap_t += dt
         self.travel += fr.v * dt
+
+        # --- 출발 모드 (2026-11-26 Map 61·70·71·배틀 실측으로 넣음) ---
+        #  출발 지점 도로 정보가 엉터리면(첫 경유점 전, 다음 구간이 150° 꺾였다고 나옴) 계획이 그 값을 믿고
+        #  [+9.0, −3.6, +1.1] 처럼 크게 꺾어 조향 +0.38 → −0.72 → +0.66 으로 휘청이고, 배틀에서는 상대 차에 붙어 벽에 박힌 뒤
+        #  출발 지점을 못 벗어남(31~101번 충돌). 첫 경유점(약 11 m)까지는 출발선에 정렬된 그대로 조향 0·풀스로틀로 곧게 감
+        #  (알베르토 출발 위빙은 그대로 둠. 엉터리 값으로는 아무것도 배우지 않고, 끝나면 그동안의 측정·계획을 비움)
+        if c.launch_mode and fr.launch_glitch and self.t_move < c.launch_max_t:
+            self.launch_on = True
+            steer = self._sysid_weave(fr)
+            self.prev = fr
+            self.prev_steer, self.prev_throttle, self.prev_brake = steer, 1.0, 0.0
+            self._log(fr, steer, 1.0, 0.0)
+            return self._emit(steer, 1.0, 0.0)
+        if self.launch_on:
+            self.launch_on = False
+            self.f_v.reset(fr.v)
+            self.f_psi.reset(fr.psi)
+            self.f_n.reset(fr.n)
+            self.kappa_meas = 0.0
+            self.kdes_lagged = 0.0
+            self.integ = 0.0
+            self.a_cmd_f = 0.0
+            self.acc_sent = []
+            self.kdes_sent = []
+            self.hist = []
+            self.planner.prev_abs = []
+            self.planner.prev_dp_abs = []
         geo = RoadGeometry(fr.knot_d, fr.knot_th)
         if fr.teleport:
             self.f_psi.reset(fr.psi)
@@ -1721,7 +1768,7 @@ class RaceBrain:
             "ld": round(self.ld_f, 1) if self.ld_f is not None else None,
             "kdes": round(self.kappa_des, 5), "kmeas": round(self.kappa_meas, 5),
             "alat": round(self.a_lat, 2), "abrk": round(self.a_brake, 2), "gain": round(self.steer_gain.get(max(fr.v, 0.0)), 4),
-            "tp": fr.teleport, "stale": self.stale_now, "anc": round(self.planner.anchor_w, 2),
+            "tp": fr.teleport, "stale": self.stale_now, "anc": round(self.planner.anchor_w, 2), "lch": self.launch_on,
             "plan": [round(x, 2) for x in getattr(self, "last_plan", None).n[:12:2]] if getattr(self, "last_plan", None) else None,
             "lohi": [[round(a, 1), round(b, 1)] for a, b in zip(self.last_plan.lo[:12:2], self.last_plan.hi[:12:2])] if getattr(self, "last_plan", None) else None})
 

@@ -76,6 +76,10 @@ CASES = [
     ("실제 차 흉내 + 조향 순수 지연 (ssafy 1랩, 장애물 14개)", dict(track_name="ssafy", laps=1,
                                                    phys=dict(pedal_lag=0.25, brake=13.0, drive_gap=1.5, mu_long=13.0,
                                                              steer_delay=0.2, steer_lag=0.1, max_steer=0.25))),
+    # 출발 지점 도로 정보 엉터리 (2026-11-26 Map 61·70·71: 첫 경유점 전에 다음 구간이 150° 꺾였다고 나옴).
+    #  출발 직후 휘청임·배틀 출발 충돌·랩 길이 감지 실패를 점검 (출발 모드 Config.launch_mode)
+    ("출발 지점 도로 정보 엉터리 (ssafy 2랩)", dict(track_name="ssafy", laps=2, start_glitch=True)),
+    ("출발 지점 엉터리 + 같은 AI끼리 배틀 (ssafy)", dict(track_name="ssafy", laps=1, battle="selfplay", start_glitch=True)),
     # 시뮬레이터가 잠깐 멈추는 경우 (실측 1.1초×2). 0.8초로 해서 drive_controller 의 '속도 10번 같으면 리셋'은 피함
     ("시뮬레이터 멈춤 0.8초×3 (basic 2랩)", dict(track_name="basic", laps=2,
                                           phys=dict(freeze=[(12.0, 0.8), (25.0, 0.8), (40.0, 0.8)]))),

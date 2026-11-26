@@ -32,7 +32,7 @@ if not os.path.exists(os.path.join(BOT, "DrivingInterface", "drive_controller.py
 
 
 def run(track_name, laps=1, battle=None, mem=None, log=None, phys=None, limit=600.0, quiet=True, cfg_over=None,
-        start_delay=3.0, spawn_yaw=0.0):
+        start_delay=3.0, spawn_yaw=0.0, start_glitch=False):
     docs = tempfile.mkdtemp()
     fakesim.install_fakes(docs)
     cars = {"Car1": (0.0, 0.0)} if not battle else {"Car1": (0.0, -4.0), "Car2": (0.0, 4.0)}
@@ -60,6 +60,22 @@ def run(track_name, laps=1, battle=None, mem=None, log=None, phys=None, limit=60
     os.environ.pop("SSAFY_LOCAL", None)   # 점검 중에는 memory.json / logs 를 만들지 않음
     my_car = load_module("my_car", os.path.join(BOT, "my_car.py"))
     my_car.time = fakesim.FakeTime()
+    if start_glitch:
+        # 출발 지점 도로 정보 엉터리 흉내 (2026-11-26 Map 61·70·71 실측): 첫 경유점을 지나 API 진행률이 바뀔 때까지
+        #  track_forward_angles 가 엉터리 구간 기준(전부 −150° 어긋남), moving_angle 도 엉터리
+        _st = my_car.RaceBrain.step
+
+        def _glitch_step(self, raw):
+            g = self.__dict__.setdefault("_glitch", {"p0": None, "d": 0.0})
+            g["d"] += float(getattr(raw, "speed", 0.0) or 0.0) / 3.6 * 0.1
+            prog = getattr(raw, "lap_progress", None)
+            if g["p0"] is None:
+                g["p0"] = prog
+            if prog == g["p0"] and g["d"] < 25.0:
+                raw.track_forward_angles = [a - 150 for a in (getattr(raw, "track_forward_angles", None) or [])]
+                raw.moving_angle = -120.0 + 3.0 * g["d"]
+            return _st(self, raw)
+        my_car.RaceBrain.step = _glitch_step
     if quiet:
         my_car.print = lambda *a, **k: None
     clients = []

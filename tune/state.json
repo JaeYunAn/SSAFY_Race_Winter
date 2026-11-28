@@ -1,5 +1,5 @@
 {
- "phase": "running",
+ "phase": "stopped",
  "cycle": 9,
  "baseline": {
   "10": {
@@ -133,7 +133,6 @@
   }
  },
  "queue": [
-  "off use_senna",
   "off use_schumacher",
   "off use_alberto",
   "off use_hamilton",
@@ -143,7 +142,7 @@
   "off use_calm (battle)"
  ],
  "queue_pos": 0,
- "no_adopt_streak": 5,
+ "no_adopt_streak": 6,
  "adopted": [
   {
    "when": "2026-11-28 16:28",
@@ -364,6 +363,17 @@
     132.61
    ],
    "verdict": "후진 0번이라 효과 측정 불가, 평균 -0.80 불합격, 되돌림"
+  },
+  "c9_off_senna": {
+   "10": [
+    82.86,
+    82.94
+   ],
+   "31": [
+    135.47,
+    134.94
+   ],
+   "verdict": "평균 +0.04 차이 없음, 켠 채로"
   }
  },
  "recheck": [
@@ -388,10 +398,22 @@
   "kappa_floor 0.6 장애물 근처만 0.85 (사이클 6)",
   "reverse_brake on (풀브레이크 때 throttle -1 = 기어 -1, WDD 팀 방식. 감속률·놓은 뒤 공백 비교)",
   "goal straight-line (직선 일자 주행: 직선 wob·방향 오차 줄이기)",
-  "goal minimal-reverse (충돌 뒤 최소 후진 탈출: 충돌 한 번당 잃은 시간 줄이기)"
+  "goal minimal-reverse (충돌 뒤 최소 후진 탈출: 충돌 한 번당 잃은 시간 줄이기)",
+  "off use_senna"
  ],
  "deferred": [
   "goal straight-line: 10·31 직선 흔들림 이미 작음, 61·161 분석 때 다시",
   "goal minimal-reverse: 개발 맵에 후진이 없어 기준으로 판단 불가, 61 기반 시험 필요"
- ]
+ ],
+ "stopped": {
+  "when": "2026-11-28 17:27",
+  "reason": "연속 6사이클 채택 없음 (멈춤 조건)",
+  "at": "사이클 9 끝, 다음 대기열 off use_schumacher",
+  "next": [
+   "161 건강 점검",
+   "기준 재측정 10·31 각 3번",
+   "남은 전략 끄기",
+   "미룬 항목"
+  ]
+ }
 }

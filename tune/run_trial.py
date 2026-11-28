@@ -44,9 +44,24 @@ def docs_dir():
     return os.path.join(os.environ.get("USERPROFILE", ""), "Documents")
 
 
+def write_sim_settings(map_no, cars):
+    """..\\start_simulator.bat 과 같은 내용의 settings.json (맵 번호, 차 수)."""
+    d = os.path.join(docs_dir(), "AirSim")
+    os.makedirs(d, exist_ok=True)
+    if cars == 2:
+        veh = ('    "Car1": { "VehicleType": "PhysXCar", "X": 0, "Y": -4, "Z": 0 },\n'
+               '    "Car2": { "VehicleType": "PhysXCar", "X": 0, "Y": 4, "Z": 0 }\n')
+    else:
+        veh = '    "Car1": { "VehicleType": "PhysXCar", "X": 0, "Y": 0, "Z": 0 }\n'
+    txt = ('{\n  "SettingsVersion": 1.2,\n  "SimMode": "Car",\n  "BGM": true,\n  "EngineSound": false,\n'
+           '  "Algo": { "Map": "%s" },\n  "Vehicles": {\n%s  }\n}\n' % (map_no, veh))
+    with open(os.path.join(d, "settings.json"), "w", encoding="ascii") as f:
+        f.write(txt)
+
+
 def start_sim_hidden(map_no, cars):
-    """..\\start_simulator.bat 과 같은 settings.json 을 쓰고, 창 없이(-RenderOffScreen) 소리 없이 시뮬레이터를 켬.
-    (사용자 요청 2026-11-28: 시험 주행 때 화면을 띄우지 않음. 배치 파일은 고치지 않음)"""
+    """..\\start_simulator.bat 과 같은 settings.json 을 쓰고, 소리 없이 시뮬레이터를 켬 (창은 화면 밖으로 옮김).
+    (사용자 요청 2026-11-28: 시험 주행 때 화면을 띄우지 않음. 배치 파일은 고치지 않음). 숨은 데스크톱이 안 될 때의 대안"""
     algo = os.path.join(ROOT, "Simulator", "Algo.exe")
     d = os.path.join(docs_dir(), "AirSim")
     os.makedirs(d, exist_ok=True)
@@ -62,9 +77,75 @@ def start_sim_hidden(map_no, cars):
     env = dict(os.environ)
     env["OPENSSL_ia32cap"] = ":~0x20000000"
     res = ["-ResX=1280", "-ResY=480"] if cars == 2 else ["-ResX=640", "-ResY=480"]
-    subprocess.Popen([algo] + res + ["-windowed", "-WinX=-4000", "-WinY=-4000", "-nosound"], cwd=os.path.dirname(algo),
-                     env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    si = None
+    if hasattr(subprocess, "STARTUPINFO"):
+        si = subprocess.STARTUPINFO()
+        si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        si.wShowWindow = 4          # SW_SHOWNOACTIVATE: 켜질 때 포커스를 뺏지 않음 (사용자가 다른 일을 하고 있음)
+    # -nosplash: 주 화면 가운데에 뜨던 시작 화면을 끔 (사용자 요청 2026-11-28: 주 화면에 아예 안 뜨게)
+    subprocess.Popen([algo] + res + ["-windowed", "-nosplash", "-WinX=-4000", "-WinY=-4000", "-nosound"],
+                     cwd=os.path.dirname(algo), env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                     stderr=subprocess.DEVNULL, startupinfo=si, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+
+
+_SIM_DESK = None     # 시뮬레이터용 숨은 데스크톱 핸들 (닫으면 데스크톱이 사라지므로 프로세스가 끝날 때까지 들고 있음)
+
+
+def start_sim_desktop(map_no, cars):
+    """사용자 화면과 다른 숨은 Windows 데스크톱에서 시뮬레이터를 켬 (사용자 요청 2026-11-28: 게임 중이라 주 화면에 아예 안 뜨고
+    포커스도 안 가져가게). 실패하면 False → 예전 방식(창을 화면 밖으로 옮김)으로."""
+    global _SIM_DESK
+    try:
+        import ctypes
+        from ctypes import wintypes
+    except Exception:
+        return False
+    u32 = ctypes.WinDLL("user32", use_last_error=True)
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+
+    class STARTUPINFOW(ctypes.Structure):
+        _fields_ = [("cb", wintypes.DWORD), ("lpReserved", wintypes.LPWSTR), ("lpDesktop", wintypes.LPWSTR),
+                    ("lpTitle", wintypes.LPWSTR), ("dwX", wintypes.DWORD), ("dwY", wintypes.DWORD),
+                    ("dwXSize", wintypes.DWORD), ("dwYSize", wintypes.DWORD), ("dwXCountChars", wintypes.DWORD),
+                    ("dwYCountChars", wintypes.DWORD), ("dwFillAttribute", wintypes.DWORD), ("dwFlags", wintypes.DWORD),
+                    ("wShowWindow", wintypes.WORD), ("cbReserved2", wintypes.WORD), ("lpReserved2", ctypes.c_void_p),
+                    ("hStdInput", wintypes.HANDLE), ("hStdOutput", wintypes.HANDLE), ("hStdError", wintypes.HANDLE)]
+
+    class PROCESS_INFORMATION(ctypes.Structure):
+        _fields_ = [("hProcess", wintypes.HANDLE), ("hThread", wintypes.HANDLE),
+                    ("dwProcessId", wintypes.DWORD), ("dwThreadId", wintypes.DWORD)]
+
+    u32.CreateDesktopW.restype = wintypes.HANDLE
+    u32.CreateDesktopW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR, ctypes.c_void_p, wintypes.DWORD,
+                                   wintypes.DWORD, ctypes.c_void_p]
+    k32.CreateProcessW.restype = wintypes.BOOL
+    k32.CreateProcessW.argtypes = [wintypes.LPCWSTR, wintypes.LPWSTR, ctypes.c_void_p, ctypes.c_void_p, wintypes.BOOL,
+                                   wintypes.DWORD, ctypes.c_void_p, wintypes.LPCWSTR, ctypes.POINTER(STARTUPINFOW),
+                                   ctypes.POINTER(PROCESS_INFORMATION)]
+    name = "SsafySimDesk"
+    if _SIM_DESK is None:
+        h = u32.CreateDesktopW(name, None, None, 0, 0x10000000, None)    # GENERIC_ALL
+        if not h:
+            log("CreateDesktop failed ({})".format(ctypes.get_last_error()))
+            return False
+        _SIM_DESK = h
+    write_sim_settings(map_no, cars)
+    algo = os.path.join(ROOT, "Simulator", "Algo.exe")
+    res = "-ResX=1280 -ResY=480" if cars == 2 else "-ResX=640 -ResY=480"
+    cmd = ctypes.create_unicode_buffer('"{}" {} -windowed -nosplash -nosound'.format(algo, res), 1024)
+    os.environ["OPENSSL_ia32cap"] = ":~0x20000000"
+    si = STARTUPINFOW()
+    si.cb = ctypes.sizeof(STARTUPINFOW)
+    si.lpDesktop = name
+    pi = PROCESS_INFORMATION()
+    ok = k32.CreateProcessW(algo, cmd, None, None, False, 0, None, os.path.dirname(algo), ctypes.byref(si),
+                            ctypes.byref(pi))
+    if not ok:
+        log("CreateProcess on hidden desktop failed ({})".format(ctypes.get_last_error()))
+        return False
+    k32.CloseHandle(pi.hThread)
+    k32.CloseHandle(pi.hProcess)
+    return True
 
 
 def move_sim_offscreen():
@@ -231,6 +312,7 @@ def main():
     ap.add_argument("--tune", default=None)
     ap.add_argument("--label", default="")
     ap.add_argument("--show", action="store_true", help="예전처럼 ..\\start_simulator.bat 으로 창을 띄워 실행")
+    ap.add_argument("--offscreen", action="store_true", help="숨은 데스크톱 대신 창을 화면 밖으로 옮기는 방식")
     a = ap.parse_args()
     m = str(a.map)
     if a.battle:
@@ -257,11 +339,12 @@ def main():
         if a.show:
             subprocess.run(["cmd", "/c", SIM_BAT, str(menu)], cwd=ROOT, stdin=subprocess.DEVNULL,
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=90)
-        else:
+        elif a.offscreen or not start_sim_desktop(m, 2 if a.battle else 1):
+            # 숨은 데스크톱을 못 쓰면: 창을 화면 밖으로 옮기는 예전 방식 (주 화면에 잠깐 뜨고 포커스를 가져갈 수 있음)
             start_sim_hidden(m, 2 if a.battle else 1)
             t_w = time.time()
             while time.time() - t_w < 40 and not move_sim_offscreen():   # 창이 생기자마자 화면 밖으로
-                time.sleep(0.2)
+                time.sleep(0.05)
         if not wait_map(hide=not a.show):
             rec["error"] = "sim_fail"
             raise RuntimeError("simulator not ready")

@@ -50,9 +50,10 @@ my_car.py 를 시뮬레이터 실제 주행으로 자동 개선한다. 기준 �
 진행 상태는 `tune/state.json`(기준 기록·흔들림·대기열 위치·연속 불채택 수·채택 목록·161 점검 주기·연속 실행 실패 수), 기록은 `tune/journal.md` 에 있다. 다시 시작하면 먼저 둘을 읽는다.
 
 ### 도구 (tune/, .venv 로 실행)
-- `tune/run_trial.py <맵> [--battle] [--tune <json>] [--label <글>] [--show]`: `..\start_simulator.bat` 과 같은 settings.json 을 쓰고
-  Algo.exe 를 소리 없이 직접 켜서 창을 화면 밖(−4000, −4000)으로 옮김 (사용자 요청 2026-11-28: 화면을 띄우지 않음. 숨기거나 최소화하면
-  렌더링이 바뀔 수 있어 위치만 옮김. 켜질 때 약 0.6초 보임). `--show` 면 예전처럼 배치 파일(1=Map10, 2=Map31, 4=Map61, 8=Map161, 10=배틀61)로 창을 띄움.
+- `tune/run_trial.py <맵> [--battle] [--tune <json>] [--label <글>] [--show] [--offscreen]`: `..\start_simulator.bat` 과 같은 settings.json 을 쓰고
+  Algo.exe 를 **숨은 Windows 데스크톱(SsafySimDesk)** 에서 소리 없이 켬 (사용자 요청 2026-11-28: 게임 중이라 주 화면에 아예 안 뜨고 포커스도
+  안 가져가게. 확인: 창 0번·포커스 0번, 기록·출발 가속·프레임 간격 평소와 같음). 데스크톱을 못 만들면 창을 화면 밖으로 옮기는 방식(`--offscreen`,
+  주 화면에 약 0.1초 뜨고 포커스를 가져감). `--show` 면 예전처럼 배치 파일(1=Map10, 2=Map31, 4=Map61, 8=Map161, 10=배틀61)로 창을 띄움.
   시뮬레이터를 다시 켜고, 41451 포트가 열리고 맵이 뜨면 봇 실행(배틀이면 my_car.py 먼저 → my_car_basic.py). 끝나거나 제한 시간(10·31 5분, 61·161 8분)이 지나면
   봇·시뮬레이터 정리, 결과 한 줄을 `tune/results/trials.jsonl` 에 추가. 한 번에 한 주행. `--tune` json 은 Config 덮어쓰기 값
 - `tune/analyze_log.py <로그...>`: 직선/코너 구간 표, 구간 최고 기록(`tune/best_sectors.json`)과 '이론 최고 랩' 비교. **로그 원본은 통째로 읽지 말고 이 요약만 읽는다**

@@ -1,6 +1,6 @@
 {
  "phase": "running",
- "cycle": 7,
+ "cycle": 9,
  "baseline": {
   "10": {
    "n": 2,
@@ -133,9 +133,6 @@
   }
  },
  "queue": [
-  "reverse_brake on (풀브레이크 때 throttle -1 = 기어 -1, WDD 팀 방식. 감속률·놓은 뒤 공백 비교)",
-  "goal straight-line (직선 일자 주행: 직선 wob·방향 오차 줄이기)",
-  "goal minimal-reverse (충돌 뒤 최소 후진 탈출: 충돌 한 번당 잃은 시간 줄이기)",
   "off use_senna",
   "off use_schumacher",
   "off use_alberto",
@@ -146,7 +143,7 @@
   "off use_calm (battle)"
  ],
  "queue_pos": 0,
- "no_adopt_streak": 3,
+ "no_adopt_streak": 5,
  "adopted": [
   {
    "when": "2026-11-28 16:28",
@@ -345,6 +342,28 @@
     133.85
    ],
    "verdict": "31 벌점 1.5, 평균 -0.82 불합격, 코드 되돌림"
+  },
+  "c7_reverse_brake": {
+   "10": [
+    82.84,
+    82.63
+   ],
+   "31": [
+    134.45,
+    134.29
+   ],
+   "verdict": "평균 -0.46 불합격"
+  },
+  "c8_rev_minimal": {
+   "10": [
+    82.45,
+    82.47
+   ],
+   "31": [
+    135.32,
+    132.61
+   ],
+   "verdict": "후진 0번이라 효과 측정 불가, 평균 -0.80 불합격, 되돌림"
   }
  },
  "recheck": [
@@ -366,6 +385,13 @@
   "grip_scale 1.30 장애물·상대 차 가까우면 1.0 (사이클 1: 61 장애물 구간 충돌)",
   "kappa_floor 0.6 새 기준 위에서 다시 (사이클 2: 61 후진 1.5 > 1.0 으로만 떨어짐)",
   "kappa_floor 0.7 (사이클 4: 0.6 은 -4.59초지만 31 벌점 1프레임)",
-  "kappa_floor 0.6 장애물 근처만 0.85 (사이클 6)"
+  "kappa_floor 0.6 장애물 근처만 0.85 (사이클 6)",
+  "reverse_brake on (풀브레이크 때 throttle -1 = 기어 -1, WDD 팀 방식. 감속률·놓은 뒤 공백 비교)",
+  "goal straight-line (직선 일자 주행: 직선 wob·방향 오차 줄이기)",
+  "goal minimal-reverse (충돌 뒤 최소 후진 탈출: 충돌 한 번당 잃은 시간 줄이기)"
+ ],
+ "deferred": [
+  "goal straight-line: 10·31 직선 흔들림 이미 작음, 61·161 분석 때 다시",
+  "goal minimal-reverse: 개발 맵에 후진이 없어 기준으로 판단 불가, 61 기반 시험 필요"
  ]
 }

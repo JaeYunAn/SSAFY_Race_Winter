@@ -7,7 +7,30 @@
       "Bash(git pull origin main)",
       "Bash(git push)",
       "Bash(git push origin main)",
-      "Bash(git push -u origin main)"
+      "Bash(git push -u origin main)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git restore *)",
+      "Bash(git status)",
+      "Bash(git status *)",
+      "Bash(git diff)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(./.venv/Scripts/python.exe tune/run_trial.py *)",
+      "Bash(./.venv/Scripts/python.exe tune/analyze_log.py *)",
+      "Bash(./.venv/Scripts/python.exe tune/loop_util.py *)",
+      "Bash(./.venv/Scripts/python.exe offline_test/run_all.py)",
+      "Bash(PYTHONIOENCODING=utf-8 ./.venv/Scripts/python.exe tune/run_trial.py *)",
+      "Bash(PYTHONIOENCODING=utf-8 ./.venv/Scripts/python.exe tune/analyze_log.py *)",
+      "Bash(PYTHONIOENCODING=utf-8 ./.venv/Scripts/python.exe tune/loop_util.py *)",
+      "Bash(PYTHONIOENCODING=utf-8 ./.venv/Scripts/python.exe offline_test/run_all.py)",
+      "Bash(cmd /c ..\\start_simulator.bat *)",
+      "Bash(taskkill /F /IM Algo-Win64-Shipping.exe)",
+      "Bash(taskkill /F /IM Algo.exe)",
+      "Bash(taskkill /F /T /PID *)",
+      "Edit(my_car.py)",
+      "Edit(tune/**)",
+      "Write(tune/**)"
     ]
   }
 }

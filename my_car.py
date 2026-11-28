@@ -170,6 +170,18 @@ class Config:
     log_path: Optional[str] = None
     verbose: bool = True                # 랩이 끝날 때 한 줄 요약 출력
 
+    # 실험 스위치 (자동 개선 반복용. 로컬에서 SSAFY_TUNE=<json> 으로 덮어씀. 기본값 = 지금까지의 동작)
+    grip_scale: float = 1.0             # 속도 계획에 쓰는 그립(mu)에 곱하는 배율
+    learn_grip: bool = True             # False: 옆 그립·제동·구간 그립 학습을 멈추고 불러온 값 그대로 씀
+    use_alberto: bool = True            # 알베르토: 출발 직후 조향 위빙 (sysid_weave)
+    use_verstappen: bool = True         # 베르스타펜: 제동 학습 + 타원 마찰원 트레일 브레이킹. False 면 제동값 고정·원 마찰원
+    use_hamilton: bool = True           # 해밀턴: 10 m 구간별 그립 지도. False 면 모든 구간 1.0
+    use_schumacher: bool = True         # 슈마허 + 알베르토: 최고 랩보다 느리면 플랜 B. False 면 늘 플랜 A
+    use_senna: bool = True              # 세나: 속도 배율 천천히 변경. False 면 바로 바꿈
+    use_vettel_manage: bool = True      # 베텔: 배틀에서 크게 앞서면 관리 주행
+    use_calm: bool = True               # 베텔 + 문호준: 사고 뒤 침착 모드
+    use_moon: bool = True               # 문호준: 장애물 근처 2단계 위험 비용 (False 면 w_near 0)
+
 
 # =====================================================================
 # 1. 센서 변환 (대회 API 전용)
@@ -586,7 +598,8 @@ class PathPlanner:
                     else:
                         gap = lo - nj if nj < lo else nj - hi
                         if gap < 1.5:
-                            cost += c.w_near * (1.5 - gap) ** 2
+                            if c.use_moon:
+                                cost += c.w_near * (1.5 - gap) ** 2
                 node[k][j] = cost
 
         # 2차 DP (곡률 = 도로 곡률 + n'')
@@ -985,6 +998,8 @@ class GripMap:
         self.mult: Dict[int, float] = {}
         self.danger: Dict[int, int] = {}
         self.used: Dict[int, float] = {}
+        self.enabled = True                 # False: 해밀턴 끔 (모든 구간 1.0)
+        self.frozen = False                 # True: 배율을 바꾸지 않음 (그립 학습 멈춤 실험)
 
     def set_lap(self, lap_len: float) -> None:
         nb = max(1, int(round(lap_len / self.bin_len)))
@@ -1007,6 +1022,8 @@ class GripMap:
         return i % self.nb if self.nb else i
 
     def get(self, s: float) -> float:
+        if not self.enabled:
+            return 1.0
         return self.mult.get(self.idx(s), 1.0)
 
     def _around(self, s: float, width: int) -> List[int]:
@@ -1022,11 +1039,15 @@ class GripMap:
         return out
 
     def cut(self, s: float, ratio: float, width: int, danger_laps: int) -> None:
+        if self.frozen or not self.enabled:
+            return
         for i in self._around(s, width):
             self.mult[i] = clamp(min(self.mult.get(i, 1.0), ratio), 0.5, 1.2)
             self.danger[i] = max(self.danger.get(i, 0), danger_laps)
 
     def scale_around(self, s: float, width: int, scale: float) -> None:
+        if self.frozen or not self.enabled:
+            return
         for i in self._around(s, width):
             self.mult[i] = min(1.0, self.mult.get(i, 1.0) * scale)
 
@@ -1035,6 +1056,9 @@ class GripMap:
         self.used[i] = max(self.used.get(i, 0.0), frac)
 
     def lap_end(self) -> None:
+        if self.frozen or not self.enabled:
+            self.used = {}
+            return
         for i in set(self.danger) | set(self.used):
             if self.danger.get(i, 0) > 0:
                 self.danger[i] -= 1
@@ -1112,6 +1136,8 @@ class RaceBrain:
         self.load_memory()
         if self.lap_len:
             self.grip.set_lap(self.lap_len)
+        self.grip.enabled = c.use_hamilton
+        self.grip.frozen = not c.learn_grip
 
         # 상태
         self.t = 0.0
@@ -1494,7 +1520,18 @@ class RaceBrain:
         a_tot = math.hypot(a_lat_meas, a_long)
 
         # --- 학습 ---
-        self._learn(fr, a_long, a_lat_meas, a_tot)
+        if c.learn_grip and c.use_verstappen:
+            self._learn(fr, a_long, a_lat_meas, a_tot)
+        else:
+            # 실험 스위치: 그립 학습 멈춤(learn_grip) / 베르스타펜 끔(제동 학습 멈춤). 조향·가속 학습은 그대로
+            dm = self.decel
+            keep = (self.a_lat, self.a_brake, self.brake_cap,
+                    {"sxx": [list(r) for r in dm.sxx], "sxy": list(dm.sxy), "A": dm.A, "B": dm.B, "n": dm.n})
+            self._learn(fr, a_long, a_lat_meas, a_tot)
+            if not c.learn_grip:
+                self.a_lat = keep[0]
+            self.a_brake, self.brake_cap = keep[1], keep[2]
+            self.decel.from_dict(keep[3])
 
         # --- 복구 상태 기계 ---
         out = self._recovery(fr, dt)
@@ -1518,12 +1555,12 @@ class RaceBrain:
         anchor_ok = fr.moving_forward and not fr.teleport and self.t - self.last_recover_t > 1.5
         plan = self.planner.plan(fr, geo, self.travel, self.t_list, anchor_ok)
         N = int(c.profile_length / c.plan_ds) + 1
-        mu = [self.a_lat * self.grip.get(self._s_ahead(k * c.plan_ds)) * self.factor for k in range(N)]
+        mu = [self.a_lat * self.grip.get(self._s_ahead(k * c.plan_ds)) * self.factor * c.grip_scale for k in range(N)]
         vcap = c.max_speed_kmh / 3.6
         # 제동 방향 그립 (타원 마찰원): 실측 제동+옆 가속 합이 약 13~14 로 옆 그립(약 11)보다 큼 (2026-11-25 Map 10).
         #  계획은 실제로 낸 최대 제동(brake_cap)보다 3%만 더 씀 → 낼 수 있으면 다음에 조금 더, 포화되면 그 값에 멈춤
         ax_ratio = 1.0
-        if c.brake_ellipse:
+        if c.brake_ellipse and c.use_verstappen:
             ax_plan = min(self.brake_cap * c.brake_cap_margin, self.a_brake)
             ax_ratio = clamp(ax_plan / max(self.a_lat, 1.0), 1.0, 1.5)
         prof = self.speed_planner.build(plan, geo, fr.v, mu, self.a_brake, self.decel, self.a_drive, self.drag, vcap,
@@ -1777,7 +1814,7 @@ class RaceBrain:
         속도가 바뀌는 구간이라 '곡률형/요레이트형' 조향 모델을 첫 장애물 전에 판별할 수 있음.
         주변에 차·장애물이 있으면 하지 않음."""
         c = self.cfg
-        if not c.sysid_weave or self.steer_gain.Sxx > 0.05:
+        if not c.sysid_weave or not c.use_alberto or self.steer_gain.Sxx > 0.05:
             return 0.0
         t0, t1 = 0.6, 0.6 + 2.0 / c.sysid_freq
         tt = self.t_move - t0
@@ -2064,7 +2101,7 @@ class RaceBrain:
     def _strategy(self, fr: Frame, dt: float) -> None:
         c = self.cfg
         # 슈마허 + 알베르토: 최고 랩 대비 늦으면(앞이 비었을 때) 플랜 B
-        if self.ghost:
+        if self.ghost and c.use_schumacher:
             gb = int(self.s_key // c.bin_len)
             if gb in self.ghost:
                 delta = self.lap_t - self.ghost[gb]
@@ -2078,9 +2115,11 @@ class RaceBrain:
         # 베텔: 초반 이후 뒤차와 멀면 관리 주행
         behind = min([-d for d, _, _ in fr.opponents if d < 0] or [999.0])
         early = self.lap == 0 and self.s_key < 170.0
-        if c.race_with_others and fr.opponents and not early and behind >= 40:
+        if c.race_with_others and c.use_vettel_manage and fr.opponents and not early and behind >= 40:
             target = min(target, c.factor_manage)
         # 베텔 + 문호준: 사고 뒤 침착 모드, 뒤차가 붙으면 해제
+        if self.calm_t > 0 and not c.use_calm:
+            self.calm_t = 0.0
         if self.calm_t > 0:
             if behind < 20:
                 self.calm_t = 0.0
@@ -2088,7 +2127,7 @@ class RaceBrain:
                 target = min(target, c.factor_calm)
                 self.calm_t -= dt
         # 세나: 배율은 천천히 바꿈
-        step = c.factor_rate * dt
+        step = c.factor_rate * dt if c.use_senna else 9.0
         self.factor += clamp(target - self.factor, -step, step)
 
     # ---------------- 기록 ----------------
@@ -2150,6 +2189,21 @@ def local_map_number() -> Optional[str]:
     return text or None
 
 
+def load_tune_overrides() -> Optional[Dict[str, Any]]:
+    """로컬 실험 때만 사용: 환경 변수 SSAFY_TUNE=<json 경로> 의 Config 덮어쓰기 값. 없으면 None.
+    대회 서버에서는 호출하지 않음 (SSAFY_LOCAL=1 일 때만)."""
+    p = os.environ.get("SSAFY_TUNE")
+    if not p:
+        return None
+    try:
+        with open(p, encoding="utf-8") as f:
+            d = json.load(f)
+        return dict(d) if isinstance(d, dict) else {}
+    except Exception as e:
+        print("[MyCar] tune file read failed:", e)
+        return {}
+
+
 class DrivingClient(DrivingController):
     def __init__(self):
         # =========================================================== #
@@ -2183,7 +2237,19 @@ class DrivingClient(DrivingController):
             except Exception:
                 log_path = None
             print("[MyCar] local practice: map={} memory={} log={}".format(map_no, mem_path, log_path))
+        tune = load_tune_overrides() if local else None
+        if tune is not None:
+            # 자동 개선 반복의 시험 주행 (서버 조건 재현): 맵 학습값은 읽지도 쓰지도 않고, 차 특성만 고정 파일에서 읽음
+            mem_path = None
+            mem_shared = tune.pop("_car_path", os.path.join("tune", "baseline_car.json"))
         self.brain_cfg = Config(memory_path=mem_path, memory_shared_path=mem_shared, log_path=log_path)
+        if tune:
+            for k, v in tune.items():
+                if hasattr(self.brain_cfg, k):
+                    setattr(self.brain_cfg, k, v)
+                else:
+                    print("[MyCar] tune: unknown Config key", k)
+            print("[MyCar] tune overrides:", tune)
         self.brain = None
         self.brain_errors = 0
 

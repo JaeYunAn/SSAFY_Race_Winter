@@ -12,3 +12,8 @@ my_car_template.py
 *.pdf
 # my_car.py 백업 (git 기록이 있으므로 저장소에는 올리지 않음)
 backup/
+# 자동 개선 반복: 주행 결과·구간 기록·멈춤 신호는 PC마다 다름
+tune/results/
+tune/best_sectors.json
+tune/STOP
+tune/STOP.txt

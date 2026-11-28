@@ -1,0 +1,18 @@
+{
+ "phase": "baseline",
+ "cycle": 0,
+ "baseline": {},
+ "initial_baseline": {},
+ "queue": [
+  "grip_scale 0.90", "grip_scale 0.95", "grip_scale 1.00", "grip_scale 1.05", "grip_scale 1.10", "grip_scale 1.15",
+  "off use_senna", "off use_schumacher", "off use_alberto", "off use_hamilton", "off use_verstappen",
+  "off use_moon", "off use_vettel_manage (battle)", "off use_calm (battle)"
+ ],
+ "queue_pos": 0,
+ "no_adopt_streak": 0,
+ "adopted": [],
+ "adopted_since_161": 0,
+ "check161": [],
+ "sim_fail_streak": 0,
+ "disabled_strategies": []
+}

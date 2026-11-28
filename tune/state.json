@@ -1,6 +1,6 @@
 {
  "phase": "running",
- "cycle": 5,
+ "cycle": 7,
  "baseline": {
   "10": {
    "n": 2,
@@ -133,7 +133,6 @@
   }
  },
  "queue": [
-  "kappa_floor 0.7 (사이클 4: 0.6 은 -4.59초지만 31 벌점 1프레임)",
   "reverse_brake on (풀브레이크 때 throttle -1 = 기어 -1, WDD 팀 방식. 감속률·놓은 뒤 공백 비교)",
   "goal straight-line (직선 일자 주행: 직선 wob·방향 오차 줄이기)",
   "goal minimal-reverse (충돌 뒤 최소 후진 탈출: 충돌 한 번당 잃은 시간 줄이기)",
@@ -147,7 +146,7 @@
   "off use_calm (battle)"
  ],
  "queue_pos": 0,
- "no_adopt_streak": 1,
+ "no_adopt_streak": 3,
  "adopted": [
   {
    "when": "2026-11-28 16:28",
@@ -324,6 +323,28 @@
     125.98
    ],
    "verdict": "31 벌점 1 > 0 불합격 (평균 -4.59)"
+  },
+  "c5_kfloor_0.7": {
+   "10": [
+    81.73,
+    80.71
+   ],
+   "31": [
+    140.51,
+    129.84
+   ],
+   "verdict": "31 충돌 2·후진 1 불합격"
+  },
+  "c6_kfloor_0.6_near": {
+   "10": [
+    81.79,
+    81.92
+   ],
+   "31": [
+    135.21,
+    133.85
+   ],
+   "verdict": "31 벌점 1.5, 평균 -0.82 불합격, 코드 되돌림"
   }
  },
  "recheck": [
@@ -343,6 +364,8 @@
   "kappa_floor 0.6/0.4/0.2 (Map 31 S자·장애물 구간 목표 속도가 kappa_floor 로 73 km/h 에 묶임)",
   "combo best grip_scale + best kappa_floor",
   "grip_scale 1.30 장애물·상대 차 가까우면 1.0 (사이클 1: 61 장애물 구간 충돌)",
-  "kappa_floor 0.6 새 기준 위에서 다시 (사이클 2: 61 후진 1.5 > 1.0 으로만 떨어짐)"
+  "kappa_floor 0.6 새 기준 위에서 다시 (사이클 2: 61 후진 1.5 > 1.0 으로만 떨어짐)",
+  "kappa_floor 0.7 (사이클 4: 0.6 은 -4.59초지만 31 벌점 1프레임)",
+  "kappa_floor 0.6 장애물 근처만 0.85 (사이클 6)"
  ]
 }

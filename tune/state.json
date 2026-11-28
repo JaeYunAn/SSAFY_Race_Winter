@@ -1,6 +1,6 @@
 {
  "phase": "loop",
- "cycle": 0,
+ "cycle": 1,
  "baseline": {
   "10": {
    "n": 3,
@@ -134,12 +134,13 @@
   }
  },
  "queue": [
-  "grip_scale 0.90",
-  "grip_scale 0.95",
   "grip_scale 1.00",
-  "grip_scale 1.05",
-  "grip_scale 1.10",
-  "grip_scale 1.15",
+  "grip_scale 1.30",
+  "grip_scale 1.60",
+  "grip_scale 2.00",
+  "grip_scale 2.50",
+  "kappa_floor 0.6/0.4/0.2 (Map 31 S자·장애물 구간 목표 속도가 kappa_floor 로 73 km/h 에 묶임)",
+  "combo best grip_scale + best kappa_floor",
   "goal straight-line (직선 일자 주행: 직선 wob·방향 오차 줄이기)",
   "goal minimal-reverse (충돌 뒤 최소 후진 탈출: 충돌 한 번당 잃은 시간 줄이기)",
   "off use_senna",
@@ -170,7 +171,16 @@
   },
   "10": {
    "time_s": 55.0,
-   "note": "베이직 2랩 합계 55초 (2026-11-28 계산: 평균 168 km/h 필요, 이론 최고 랩 41.5초 기준으로는 2랩 약 87~88초가 현재 방식 한계)"
+   "note": "베이직 2랩 합계 55초 (2026-11-28 계산: 평균 168 km/h 필요, 이론 최고 랩 41.5초 기준으로는 2랩 약 87~88초가 현재 방식 한계)",
+   "leader": 58.82
+  },
+  "31": {
+   "time_s": 113.6,
+   "note": "Map 31 1등 팀 매드맥스 1:53.62"
   }
- }
+ },
+ "notes": [
+  "2026-11-28 1등 팀 Map 10 영상 58.82초: 코너 159~196 km/h, 드리프트 없음 → 높은 그립 방향으로 실험 (사용자 지시)",
+  "2026-11-28 1등 팀 Map 31 영상 '매드맥스' 113.6초 (우리 143.6): 장애물+S자 구간에서 랩마다 5~6초, 코너 최저 속도 15~35 km/h 낮음. S자 구간 목표 속도가 kappa_floor 0.85 × 도로 곡률 0.04 로 73 km/h 에 묶임 (계획 경로 곡률은 0.01)"
+ ]
 }

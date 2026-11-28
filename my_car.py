@@ -1660,7 +1660,7 @@ class RaceBrain:
         k_ff = lerp_list(plan.d, plan.kappa, min(v * 0.15, plan.d[-1]))
         self.kappa_des = 0.7 * k_pp + 0.3 * k_ff
         # 그립 한계 이상으로 조향하지 않음: 앞바퀴가 미끄러지면 브레이크까지 안 듣게 되므로
-        k_lim = 1.08 * self.a_lat * self.grip.get(self.s_key) / max(v * v, 1.0)
+        k_lim = 1.08 * self.a_lat * self.grip.get(self.s_key) * c.grip_scale / max(v * v, 1.0)
         grip_capped = abs(self.kappa_des) > k_lim
         self.kappa_des = clamp(self.kappa_des, -k_lim, k_lim)
         self.kdes_sent.append((self.t, self.kappa_des, dt))   # 조향 지연 예측용 기록

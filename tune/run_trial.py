@@ -33,6 +33,69 @@ def log(msg):
     print("[trial {}] {}".format(time.strftime("%H:%M:%S"), msg), flush=True)
 
 
+def docs_dir():
+    try:
+        out = subprocess.run(["powershell", "-NoProfile", "-Command", "[Environment]::GetFolderPath('MyDocuments')"],
+                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=20).stdout.decode("utf-8", "replace").strip()
+        if out:
+            return out
+    except Exception:
+        pass
+    return os.path.join(os.environ.get("USERPROFILE", ""), "Documents")
+
+
+def start_sim_hidden(map_no, cars):
+    """..\\start_simulator.bat 과 같은 settings.json 을 쓰고, 창 없이(-RenderOffScreen) 소리 없이 시뮬레이터를 켬.
+    (사용자 요청 2026-11-28: 시험 주행 때 화면을 띄우지 않음. 배치 파일은 고치지 않음)"""
+    algo = os.path.join(ROOT, "Simulator", "Algo.exe")
+    d = os.path.join(docs_dir(), "AirSim")
+    os.makedirs(d, exist_ok=True)
+    if cars == 2:
+        veh = ('    "Car1": { "VehicleType": "PhysXCar", "X": 0, "Y": -4, "Z": 0 },\n'
+               '    "Car2": { "VehicleType": "PhysXCar", "X": 0, "Y": 4, "Z": 0 }\n')
+    else:
+        veh = '    "Car1": { "VehicleType": "PhysXCar", "X": 0, "Y": 0, "Z": 0 }\n'
+    txt = ('{\n  "SettingsVersion": 1.2,\n  "SimMode": "Car",\n  "BGM": true,\n  "EngineSound": false,\n'
+           '  "Algo": { "Map": "%s" },\n  "Vehicles": {\n%s  }\n}\n' % (map_no, veh))
+    with open(os.path.join(d, "settings.json"), "w", encoding="ascii") as f:
+        f.write(txt)
+    env = dict(os.environ)
+    env["OPENSSL_ia32cap"] = ":~0x20000000"
+    res = ["-ResX=1280", "-ResY=480"] if cars == 2 else ["-ResX=640", "-ResY=480"]
+    subprocess.Popen([algo] + res + ["-windowed", "-WinX=-4000", "-WinY=-4000", "-nosound"], cwd=os.path.dirname(algo),
+                     env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+
+
+def move_sim_offscreen():
+    """시뮬레이터 창(제목 'Algo')을 포커스를 뺏지 않고 화면 밖으로 옮김. 숨기거나 최소화하면 렌더링·시간 흐름이
+    바뀔 수 있어서 창은 그대로 두고 위치만 옮김. 옮긴 창 수를 돌려줌."""
+    try:
+        import ctypes
+        from ctypes import wintypes
+    except Exception:
+        return 0
+    user32 = ctypes.windll.user32
+    found = []
+
+    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    def cb(hwnd, _):
+        if user32.IsWindowVisible(hwnd):
+            buf = ctypes.create_unicode_buffer(64)
+            user32.GetWindowTextW(hwnd, buf, 64)
+            if buf.value.strip() == "Algo":
+                found.append(hwnd)
+        return True
+    user32.EnumWindows(cb, 0)
+    SWP_NOSIZE, SWP_NOZORDER, SWP_NOACTIVATE = 0x0001, 0x0004, 0x0010
+    for h in found:
+        r = wintypes.RECT()
+        user32.GetWindowRect(h, ctypes.byref(r))
+        if r.left > -3000:
+            user32.SetWindowPos(h, 0, -4000, -4000, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE)
+    return len(found)
+
+
 def kill_sim():
     for im in SIM_IMAGES:
         subprocess.run(["taskkill", "/F", "/IM", im], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -77,9 +140,11 @@ def plain(obj):
     return d
 
 
-def wait_map(limit=150):
+def wait_map(limit=150, hide=False):
     t0 = time.time()
     while time.time() - t0 < limit:
+        if hide:
+            move_sim_offscreen()
         if port_open():
             try:
                 c = api_client()
@@ -165,6 +230,7 @@ def main():
     ap.add_argument("--battle", action="store_true")
     ap.add_argument("--tune", default=None)
     ap.add_argument("--label", default="")
+    ap.add_argument("--show", action="store_true", help="예전처럼 ..\\start_simulator.bat 으로 창을 띄워 실행")
     a = ap.parse_args()
     m = str(a.map)
     if a.battle:
@@ -188,9 +254,15 @@ def main():
         log("map {}{} — restarting simulator".format(m, " battle" if a.battle else ""))
         kill_sim()
         time.sleep(2.0)
-        subprocess.run(["cmd", "/c", SIM_BAT, str(menu)], cwd=ROOT, stdin=subprocess.DEVNULL,
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=90)
-        if not wait_map():
+        if a.show:
+            subprocess.run(["cmd", "/c", SIM_BAT, str(menu)], cwd=ROOT, stdin=subprocess.DEVNULL,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=90)
+        else:
+            start_sim_hidden(m, 2 if a.battle else 1)
+            t_w = time.time()
+            while time.time() - t_w < 40 and not move_sim_offscreen():   # 창이 생기자마자 화면 밖으로
+                time.sleep(0.2)
+        if not wait_map(hide=not a.show):
             rec["error"] = "sim_fail"
             raise RuntimeError("simulator not ready")
         log("map ready — starting bot")
@@ -209,6 +281,8 @@ def main():
         t0 = time.time()
         limit = LIMIT[m]
         while time.time() - t0 < limit and any(p.poll() is None for p, _, _ in bots):
+            if not a.show:
+                move_sim_offscreen()
             time.sleep(1.0)
         rec["wall_s"] = round(time.time() - t0, 1)
         rec["timeout"] = any(p.poll() is None for p, _, _ in bots)

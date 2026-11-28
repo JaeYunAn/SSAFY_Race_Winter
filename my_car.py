@@ -98,7 +98,8 @@ class Config:
     obstacle_length: float = 2.0        # 장애물은 모든 맵에서 2 m × 2 m
     obstacle_width: float = 2.0
     edge_margin: float = 0.5            # 차 중심이 도로 끝선 안쪽으로 남길 여유(m). 벌점 경계는 끝선 +1.25 m
-    angle_step: float = 10.0            # 경유점 간격 (m)
+    edge_soft: float = 0.0              # 평활화 통로를 도로 끝에서 이만큼 더 안쪽으로 (DP 가 끝 쪽 틈을 고른 지점은 예외). 0 이면 끔
+    angle_step: float = 10.0           # 경유점 간격 (m)
     max_speed_kmh: float = 250.0
 
     # 경로 계획
@@ -136,7 +137,9 @@ class Config:
     launch_mode: bool = True
     launch_glitch_deg: float = 60.0
     launch_max_t: float = 8.0
-    straight_mode: bool = True          # 직선 모드: 곧은 길에서는 먼 점(straight_look_t 초 앞)을 겨누고 천천히만 고침. 끄려면 False
+    ld_gain: float = 0.32               # 조향 목표점 거리 = ld_gain × 속도(m/s) + 5 m (6 ~ ld_max)
+    ld_max: float = 32.0
+    straight_mode: bool = True         # 직선 모드: 곧은 길에서는 먼 점(straight_look_t 초 앞)을 겨누고 천천히만 고침. 끄려면 False
     straight_look_t: float = 2.0
     straight_ld_max: float = 120.0
     steer_smith: float = 0.30           # 조향 지연 보상 창 최대(초): 이 시간 안에 보낸 목표 곡률은 '아직 안 돈 몫'으로 예측에 더함. 0 이면 끔
@@ -149,6 +152,10 @@ class Config:
     sysid_amp: float = 0.05
     sysid_freq: float = 0.6
     reverse_brake: bool = False         # True: 강한 제동 때 throttle −1(후진 기어)도 같이 사용 (7기 팀 관찰)
+    brake_deadband: float = 0.0         # 이 값보다 약한 제동은 (장애물·다른 차 100 m 안에 없을 때) 밟지 않음. 0 이면 끔
+    deadband_throttle: float = 1.0      # 약한 제동 대신 낼 스로틀
+    deadband_over: float = 99.0         # 지금 속도가 계획 속도보다 이만큼(m/s) 넘게 빠르면 약한 제동도 밟음
+    deadband_dv: float = 0.0          # 앞 2초 안 계획 최저 속도가 지금보다 이만큼(m/s) 넘게 낮으면 약한 제동도 밟음. 0 이면 이 조건 없음
 
     # 전략
     # 슈마허 + 알베르토 플랜 A/B 속도 배율 (학습한 그립에 곱함). 0.92/0.96 → 0.96/1.00 (2026-11-25)
@@ -698,6 +705,14 @@ class PathPlanner:
                     hi = min(hi, blo)
             if k == 0:
                 lo, hi = n0, n0
+            elif c.edge_soft > 0.0:
+                # 부드러운 도로 끝 여유 (2026-11-28): 평활화한 선은 통로 끝에 붙는데, 조향 지연으로 약 2 m 밀려 벌점이 남
+                #  → 끝에서 edge_soft 만큼 더 안쪽까지만 쓰되, 격자 DP 가 그보다 바깥 칸을 골랐으면(그 길밖에 없는 틈) 원래 끝까지 허용
+                Bs = B - c.edge_soft
+                if n[k] >= -Bs:
+                    lo = max(lo, -Bs)
+                if n[k] <= Bs:
+                    hi = min(hi, Bs)
             lo_l.append(lo)
             hi_l.append(hi)
             blocked.append(is_blocked and k > 0)
@@ -1633,7 +1648,7 @@ class RaceBrain:
             d0 = (1.0 - w) * d0 + w * d_s
         cx0, cy0 = geo.path_point(d0, n_p)
         head = geo.heading(d0) + psi_p
-        Ld_n = clamp(0.32 * v + 5.0, 6.0, 32.0)
+        Ld_n = clamp(c.ld_gain * v + 5.0, 6.0, c.ld_max)
         # 직선 모드 (작대기처럼 1자로, 2026-11-25 Map 161 실측으로 넣음): 계획이 1자로 고정된 뒤에도 차가 그 선을 중심으로
         #  약 2.4초 주기로 흔들림 (150 km/h ±0.35 m, 185 km/h ±0.9 m·±3°, 조향 ±0.17 → 직선에서 옆 가속 약 11 m/s²).
         #  목표점 거리 32 m 는 50 m/s 에서 '선으로 되돌아오는 주기'가 약 2.8초라 조향 지연 0.5초에 여유가 거의 없음.
@@ -1754,6 +1769,24 @@ class RaceBrain:
         else:
             throttle = 0.0
             brake = clamp((-a_cmd - drag_a) / max(self.a_brake, 1.0), 0.0, 1.0)
+            if 0.0 < brake < c.brake_deadband and v > 15.0:
+                # 약한 제동 없애기 (2026-11-28 Map 10 실측): 브레이크를 0.2초·0.21 만 밟아도 놓은 뒤 1.5초 동안
+                #  132 → 116 km/h (자동 변속기 기어 내림으로 구동이 끊김). 코너에서 풀스로틀이면 옆 가속 8~12 에서도
+                #  +0.65 m/s² 인데 부분 스로틀·제동 직후는 −4.3. 1위 팀은 Map 10 에서 브레이크 0번
+                #  → 장애물·다른 차가 가깝지 않으면 약한 제동은 밟지 않고 스로틀 유지 (필요하면 곧 센 제동이 한 번 들어감)
+                busy_b = (any(-5.0 < d < 100.0 for d, _ in fr.obstacles)
+                          or any(-10.0 < d < 100.0 for d, _, _ in fr.opponents))
+                # 큰 감속 구간이 다가오면(앞 2초 안 계획 최저 속도가 지금보다 deadband_dv 넘게 낮음) 약한 제동도 그대로 밟음:
+                #  감속은 약하게 시작해 세지므로 앞부분을 건너뛰면 헤어핀 앞 제동이 늦어짐 (가짜 차 germany 조향 지연 시험에서 충돌)
+                if c.deadband_dv > 0.0:
+                    hz2 = max(v * 2.0, 10.0)
+                    v_min2 = min(lerp_list(prof.d, prof.v, min(d_c + hz2 * q, prof.d[-1])) for q in (0.0, 0.25, 0.5, 0.75, 1.0))
+                    busy_b = busy_b or (v - v_min2 > c.deadband_dv)
+                # 이미 계획 속도보다 deadband_over 넘게 빠르면 밟음 (계획보다 빨리 코너에 들어가지 않게)
+                busy_b = busy_b or (v_c - v_ref_gap > c.deadband_over)
+                if not busy_b:
+                    brake = 0.0
+                    throttle = c.deadband_throttle
             if c.reverse_brake and brake >= 0.95 and v > 8.0:
                 throttle = -1.0                          # 후진 기어 제동 (선택)
         if fr.v < -0.3:                                  # 아직 뒤로 가고 있으면 멈추고 출발

@@ -115,7 +115,8 @@ class Config:
     #  2026-11-25 0.3 으로 실제 주행: Map 161 칸 뒤집힘 7.0 → 8.4%, 조향 흔들림 0.088 → 0.092 로 효과 없고 Map 61 은 8.4초 느려져 끔
     plan_anchor: bool = True            # 장애물·다른 차가 없을 때 새 계획을 차의 자세 대신 지난 계획 위에서 시작 (직선 흔들림 방지)
     w_edge: float = 3.0
-    w_near: float = 6.0                 # 장애물 근처 비용 (문호준 2단계 위험 비용)
+    w_side: float = 0.0                 # 장애물을 지난 프레임 계획과 반대쪽으로 피하는 칸의 비용 (피할 방향 뒤집힘 방지). 0 이면 끔
+    w_near: float = 6.0                # 장애물 근처 비용 (문호준 2단계 위험 비용)
     lat_buffer: float = 0.8             # 0.1초 제어라 추종 오차를 감안해 옆 여유를 넉넉히
     long_buffer: float = 2.0
     smooth_iters: int = 30
@@ -621,6 +622,13 @@ class PathPlanner:
                         if gap < 1.5:
                             if c.use_moon:
                                 cost += c.w_near * (1.5 - gap) ** 2
+                        # 피할 방향 유지 (2026-11-28 Map 31): 116 km/h 에서 계획이 장애물 오른쪽 → 0.2초 뒤 왼쪽으로 뒤집혀
+                        #  브레이크 + 반대편으로 건너가다 도로 밖. 지난 프레임 계획이 지나간 쪽의 반대편 칸에 비용 (막히면 BIG 이 이김)
+                        if c.w_side > 0.0 and self.prev_abs:
+                            if prev_n[k] > hi and nj < lo:
+                                cost += c.w_side
+                            elif prev_n[k] < lo and nj > hi:
+                                cost += c.w_side
                 node[k][j] = cost
 
         # 2차 DP (곡률 = 도로 곡률 + n'')

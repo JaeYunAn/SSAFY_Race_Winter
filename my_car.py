@@ -192,7 +192,9 @@ class Config:
     grip_scale_clear: Optional[float] = None  # 이번 주행에서 장애물·다른 차를 한 번도 못 봤을 때의 그립 배율 (None = grip_scale)
     grip_near_pre: float = 40.0         # 장애물 앞 이 거리부터 (m)
     grip_near_post: float = 15.0        # 장애물 뒤 이 거리까지 (m)
-    bump_avoid: bool = True             # 센서에 없는 것에 부딪히면 그 자리를 지나갈 때까지만 비켜 감 (다음 바퀴에는 안 씀)
+    obs_brake_scale: float = 1.0        # 장애물 앞 obs_brake_pre m 부터의 계획 감속 배율 (1 = 예전). 작을수록 일찍·약하게 감속
+    obs_brake_pre: float = 100.0
+    bump_avoid: bool = True            # 센서에 없는 것에 부딪히면 그 자리를 지나갈 때까지만 비켜 감 (다음 바퀴에는 안 씀)
     bump_hold_t: float = 20.0           # 비켜 갈 자리를 유지하는 최대 시간 (초)
     grip_near_range: float = 999.0     # 이 거리(m)보다 먼 장애물은 근처 그립 구간에 쓰지 않음 (센서 범위 끝 깜빡임 방지)
     use_alberto: bool = True            # 알베르토: 출발 직후 조향 위빙 (sysid_weave)
@@ -786,8 +788,9 @@ class SpeedPlanner:
 
     def build(self, plan: Plan, geo: RoadGeometry, v0: float, mu: List[float],
               a_brake: float, decel: "DecelModel", a_drive: float, drag: float, vcap: float,
-              ax_ratio: float = 1.0) -> Profile:
-        """ax_ratio: 제동 방향 그립 / 옆 그립 (1 = 원 모양 마찰원, 1보다 크면 앞뒤로 긴 타원)."""
+              ax_ratio: float = 1.0, bscale: Optional[List[float]] = None) -> Profile:
+        """ax_ratio: 제동 방향 그립 / 옆 그립 (1 = 원 모양 마찰원, 1보다 크면 앞뒤로 긴 타원).
+        bscale: 지점별 계획 감속 배율 (장애물 앞에서 일찍·약하게 감속). None 이면 모두 1."""
         c = self.cfg
         ds = c.plan_ds
         N = int(c.profile_length / ds) + 1
@@ -820,6 +823,8 @@ class SpeedPlanner:
             ab = min(a_brake, tire) + decel.B * vb2          # 브레이크 이득(부분 제동으로 실측)과 마찰원 중 작은 값
             if decel.n >= 20:                                  # 풀브레이크 실측이 쌓였으면 그 값도 상한으로
                 ab = min(ab, 0.97 * (decel.A + decel.B * vb2))
+            if bscale is not None:
+                ab *= bscale[k]
             ab = max(ab, 0.15 * a_brake)
             lim = math.sqrt(v[k + 1] ** 2 + 2 * ab * ds)
             if lim < v[k]:
@@ -1621,8 +1626,21 @@ class RaceBrain:
         if c.brake_ellipse and c.use_verstappen:
             ax_plan = min(self.brake_cap * c.brake_cap_margin, self.a_brake)
             ax_ratio = clamp(ax_plan / max(self.a_lat, 1.0), 1.0, 1.5)
+        # 장애물 앞 부드러운 감속 (2026-11-28 Map 31): 속도 계획은 '가장 늦게·가장 세게' 제동이라 장애물 앞 감속이 회피 동작 한가운데의
+        #  최대 제동으로 몰리고, 그때 꺾으면 미끄러져 사고. 장애물 앞 obs_brake_pre m ~ 뒤 grip_near_post m 는 계획 감속을
+        #  obs_brake_scale 배로 → 더 일찍·약하게 감속해 회피 중 조향에 쓸 그립을 남김 (그 순간 센서에 보이는 장애물만 씀)
+        bsc = None
+        if c.obs_brake_scale < 1.0:
+            bsc = [1.0] * N
+            for d in [o[0] for o in fr.obstacles] + [o[0] for o in fr.opponents]:
+                if d + c.grip_near_post < 0.0:
+                    continue
+                k0 = max(0, int((d - c.obs_brake_pre) / c.plan_ds))
+                k1 = min(N - 1, int((d + c.grip_near_post) / c.plan_ds) + 1)
+                for k in range(k0, k1 + 1):
+                    bsc[k] = c.obs_brake_scale
         prof = self.speed_planner.build(plan, geo, fr.v, mu, self.a_brake, self.decel, self.a_drive, self.drag, vcap,
-                                        ax_ratio)
+                                        ax_ratio, bsc)
         self.t_list = prof.t[: c.plan_stations + 1]
         self.last_plan, self.last_prof, self.last_geo, self.last_mu = plan, prof, geo, mu
 

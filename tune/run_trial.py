@@ -22,8 +22,8 @@ ROOT = os.path.dirname(WS)
 SIM_BAT = os.path.join(ROOT, "start_simulator.bat")
 PY = os.path.join(WS, ".venv", "Scripts", "python.exe")
 RESULTS = os.path.join(HERE, "results")
-MENU = {"10": 1, "31": 2, "61": 4, "161": 8}
-LIMIT = {"10": 300, "31": 300, "61": 480, "161": 480}
+MENU = {"10": 1, "31": 2, "30": 3, "61": 4, "60": 5, "71": 6, "70": 7, "161": 8, "160": 9}
+LIMIT = {"10": 300, "31": 300, "30": 300, "61": 480, "60": 480, "71": 480, "70": 480, "161": 480, "160": 480}
 SIM_IMAGES = ["Algo-Win64-Shipping.exe", "Algo.exe"]
 
 sys.path.insert(0, os.path.join(WS, "DrivingInterface"))

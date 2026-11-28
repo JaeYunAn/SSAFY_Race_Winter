@@ -29,10 +29,10 @@ PERT = [(1.0, 3.0), (0.97, 3.0), (1.03, 3.0), (1.0, 3.05), (0.97, 3.05), (1.03, 
 
 
 def job(args):
-    key, name, kw, phys, mu_f, delay = args
+    key, name, kw, phys, mu_f, delay, mu_base = args
     import run_race
     p = dict(phys)
-    p["mu"] = p.get("mu", 10.0) * mu_f
+    p["mu"] = p.get("mu", 10.0) * mu_f * mu_base
     kw = dict(kw)
     kw["phys"] = p
     kw["start_delay"] = delay
@@ -44,8 +44,14 @@ def job(args):
 
 
 def main():
-    overs = [json.dumps(json.loads(a), sort_keys=True) for a in sys.argv[1:]] or ["{}"]
-    jobs = [(o, n, kw, ph, mf, d) for o in overs for n, kw, ph in CASES for mf, d in PERT]
+    args = sys.argv[1:]
+    mu_base = 1.0
+    if "--mu" in args:
+        i = args.index("--mu")
+        mu_base = float(args[i + 1])
+        del args[i:i + 2]
+    overs = [json.dumps(json.loads(a), sort_keys=True) for a in args] or ["{}"]
+    jobs = [(o, n, kw, ph, mf, d, mu_base) for o in overs for n, kw, ph in CASES for mf, d in PERT]
     with Pool(processes=max(1, os.cpu_count() or 1), maxtasksperchild=1) as pool:
         rows = pool.map(job, jobs)
     print("{:<60}{:>6}{:>7}{:>7}{:>7}{:>9}{:>6}".format("덮어쓰기", "미완주", "리셋", "충돌", "벌점", "시간합", "예외"))

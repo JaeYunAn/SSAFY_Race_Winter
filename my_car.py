@@ -152,8 +152,12 @@ class Config:
     sysid_amp: float = 0.05
     sysid_freq: float = 0.6
     reverse_brake: bool = False         # True: 강한 제동 때 throttle −1(후진 기어)도 같이 사용 (7기 팀 관찰)
-    brake_deadband: float = 0.0         # 이 값보다 약한 제동은 (장애물·다른 차 100 m 안에 없을 때) 밟지 않음. 0 이면 끔
+    slide_release: bool = False         # 제동 중 차가 명령보다 더 돌면(오버스티어) 브레이크를 풂
+    slide_k: float = 0.012              # 미끄러짐 판단 곡률 차 (1/m)
+    slide_brake: float = 0.2            # 미끄러질 때 남기는 제동
+    brake_deadband: float = 0.0        # 이 값보다 약한 제동은 (장애물·다른 차 100 m 안에 없을 때) 밟지 않음. 0 이면 끔
     deadband_throttle: float = 1.0      # 약한 제동 대신 낼 스로틀
+    deadband_clear_only: bool = False   # True 면 이번 주행에서 장애물·다른 차를 한 번도 못 봤을 때만 약한 제동 없애기
     deadband_over: float = 99.0         # 지금 속도가 계획 속도보다 이만큼(m/s) 넘게 빠르면 약한 제동도 밟음
     deadband_dv: float = 0.0          # 앞 2초 안 계획 최저 속도가 지금보다 이만큼(m/s) 넘게 낮으면 약한 제동도 밟음. 0 이면 이 조건 없음
 
@@ -184,6 +188,7 @@ class Config:
     #  2026-11-28 사이클 1: grip_scale 1.30 은 10·31 에서 크게 빨라졌지만 장애물 많은 61 에서 회피 중 충돌 3 → 9건
     #  → 근처만 1.0 으로: 10 −6.75, 31 −8.87, 61 −0.13초, 61 충돌 3 → 2, 벌점 19 → 11.5 (채택)
     grip_scale_near: Optional[float] = 1.0
+    grip_scale_clear: Optional[float] = None  # 이번 주행에서 장애물·다른 차를 한 번도 못 봤을 때의 그립 배율 (None = grip_scale)
     grip_near_pre: float = 40.0         # 장애물 앞 이 거리부터 (m)
     grip_near_post: float = 15.0        # 장애물 뒤 이 거리까지 (m)
     use_alberto: bool = True            # 알베르토: 출발 직후 조향 위빙 (sysid_weave)
@@ -1187,6 +1192,7 @@ class RaceBrain:
         self.straight_w = 0.0
         self.straight_on = False                                  # 직선 모드가 켜져 있는지 (켜고 끄는 문턱이 다름)
         self.gs0 = c.grip_scale                               # 지금 자리의 그립 배율 (조향 곡률 상한에 씀)
+        self.traffic_seen = False                            # 이번 주행에서 장애물·다른 차를 한 번이라도 봤는지 (센서)
         self.psi_rate = 0.0
         self.slip_frames = 0
         self.grow_frames = 0
@@ -1577,7 +1583,13 @@ class RaceBrain:
         anchor_ok = fr.moving_forward and not fr.teleport and self.t - self.last_recover_t > 1.5
         plan = self.planner.plan(fr, geo, self.travel, self.t_list, anchor_ok)
         N = int(c.profile_length / c.plan_ds) + 1
-        gs = [c.grip_scale] * N
+        # 장애물 없는 길 모드 (2026-11-28): 장애물이 있는 맵에서는 진입 속도를 올리는 변경마다 회피 사고(조향 지연 0.5초 + 회전 관성)가
+        #  늘었고, 장애물 없는 Map 10 에서는 그립 배율 1.6 이 매번 약 3.5초 빠름 → 이번 주행에서 장애물·다른 차를 한 번도 못 봤으면
+        #  grip_scale_clear 를 씀 (센서로만 판단, 맵 번호 안 씀). 한 번이라도 보면 그 뒤로는 grip_scale
+        if fr.obstacles or fr.opponents:
+            self.traffic_seen = True
+        g_base = c.grip_scale_clear if (c.grip_scale_clear is not None and not self.traffic_seen) else c.grip_scale
+        gs = [g_base] * N
         if c.grip_scale_near is not None:
             for d in [o[0] for o in fr.obstacles] + [o[0] for o in fr.opponents]:
                 if d + c.grip_near_post < 0.0:
@@ -1769,7 +1781,7 @@ class RaceBrain:
         else:
             throttle = 0.0
             brake = clamp((-a_cmd - drag_a) / max(self.a_brake, 1.0), 0.0, 1.0)
-            if 0.0 < brake < c.brake_deadband and v > 15.0:
+            if 0.0 < brake < c.brake_deadband and v > 15.0 and not (c.deadband_clear_only and self.traffic_seen):
                 # 약한 제동 없애기 (2026-11-28 Map 10 실측): 브레이크를 0.2초·0.21 만 밟아도 놓은 뒤 1.5초 동안
                 #  132 → 116 km/h (자동 변속기 기어 내림으로 구동이 끊김). 코너에서 풀스로틀이면 옆 가속 8~12 에서도
                 #  +0.65 m/s² 인데 부분 스로틀·제동 직후는 −4.3. 1위 팀은 Map 10 에서 브레이크 0번
@@ -1787,6 +1799,15 @@ class RaceBrain:
                 if not busy_b:
                     brake = 0.0
                     throttle = c.deadband_throttle
+            if c.slide_release and brake > c.slide_brake and v > 15.0 and self.kdes_sent:
+                # 제동 중 미끄러짐이면 브레이크를 풂 (2026-11-28 Map 31 실측): 166 km/h 로 장애물 앞 풀브레이크 → 왼쪽으로 꺾는데
+                #  차는 2초 넘게 오른쪽으로 계속 돌아(오버스티어) 도로 밖 18 m. 조향 지연만큼 전에 보낸 목표 곡률보다
+                #  같은 쪽으로 slide_k 넘게 더 돌고 있으면 제동을 slide_brake 로 줄여 옆 그립을 되찾음
+                t_lag = self.t - self.lag_taus[self.lag_best]
+                kd_lag = min(self.kdes_sent, key=lambda e: abs(e[0] - t_lag))[1]
+                err = self.kappa_meas - kd_lag
+                if abs(err) > c.slide_k and err * self.kappa_meas > 0.0:
+                    brake = c.slide_brake
             if c.reverse_brake and brake >= 0.95 and v > 8.0:
                 throttle = -1.0                          # 후진 기어 제동 (선택)
         if fr.v < -0.3:                                  # 아직 뒤로 가고 있으면 멈추고 출발
@@ -1827,6 +1848,23 @@ class RaceBrain:
         self._log(fr, steer, throttle, brake)
         return self._emit(steer, throttle, brake)
 
+    def _vlim_dbg(self) -> Optional[List[float]]:
+        """로그용: 앞 100 m 안에서 옆 그립 한계 속도가 가장 낮은 지점 [거리 m, 한계 km/h, 그 지점 그립 m/s², 곡률]."""
+        prof = getattr(self, "last_prof", None)
+        mu = getattr(self, "last_mu", None)
+        if not prof or not prof.lim or not mu:
+            return None
+        best = None
+        for k, (d, lv) in enumerate(zip(prof.d, prof.lim)):
+            if d > 100.0:
+                break
+            if best is None or lv < best[1]:
+                best = (d, lv, mu[k] if k < len(mu) else 0.0)
+        if best is None:
+            return None
+        kap = best[2] / max(best[1] * best[1], 1e-6)
+        return [round(best[0], 1), round(best[1] * 3.6, 1), round(best[2], 1), round(kap, 4)]
+
     def _gap_finish(self) -> None:
         """구동 공백 학습 한 번 마감: 계획한 최저 속도보다 실제로 더 떨어진 만큼 gap_dv 를 올리고, 덜 떨어졌으면 내림."""
         t0, tgt, vmin, capped = self.gap_track
@@ -1851,6 +1889,7 @@ class RaceBrain:
             "st": round(steer, 3), "th": round(throttle, 3), "br": round(brake, 3),
             "state": self.state, "mode": self.plan_mode, "fac": round(self.factor, 3),
             "vref": self.debug.get("v_ref"), "vpred": round(self.v_pred * 3.6, 1), "gapdv": round(self.gap_dv * 3.6, 1),
+            "vlim": self._vlim_dbg(),
             "bcap": round(self.brake_cap, 2), "slag": self.lag_taus[self.lag_best], "smw": round(self.smith_w, 2),
             "ld": round(self.ld_f, 1) if self.ld_f is not None else None,
             "kdes": round(self.kappa_des, 5), "kmeas": round(self.kappa_meas, 5),

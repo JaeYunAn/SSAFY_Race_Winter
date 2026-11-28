@@ -1,6 +1,6 @@
 {
- "phase": "stopped",
- "cycle": 9,
+ "phase": "running",
+ "cycle": 10,
  "baseline": {
   "10": {
    "n": 2,
@@ -133,6 +133,13 @@
   }
  },
  "queue": [
+  "grip_scale 1.6 (near 1.0)",
+  "grip_scale 2.0 (near 1.0)",
+  "smooth_iters 200",
+  "w_slope 0.2",
+  "plan_stations 36",
+  "kappa_floor 낮춤 + 좋은 라인 조합",
+  "코너 안 조향 출렁임 원인",
   "off use_schumacher",
   "off use_alberto",
   "off use_hamilton",
@@ -142,7 +149,7 @@
   "off use_calm (battle)"
  ],
  "queue_pos": 0,
- "no_adopt_streak": 6,
+ "no_adopt_streak": 0,
  "adopted": [
   {
    "when": "2026-11-28 16:28",
@@ -175,13 +182,16 @@
    "note": "장애물 SSAFY 3분 10초 초반"
   },
   "10": {
-   "time_s": 55.0,
-   "note": "베이직 2랩 합계 55초 (2026-11-28 계산: 평균 168 km/h 필요, 이론 최고 랩 41.5초 기준으로는 2랩 약 87~88초가 현재 방식 한계)",
-   "leader": 58.82
+   "time_s": 58.82,
+   "note": "막스 베르싸피엔 2랩 58.82, 코너 159 km/h 이상"
   },
   "31": {
-   "time_s": 113.6,
-   "note": "Map 31 1등 팀 매드맥스 1:53.62"
+   "time_s": 113.62,
+   "note": "매드맥스 1:53.62"
+  },
+  "161": {
+   "time_s": 117.4,
+   "note": "WDD 1랩 1:57.40 (장애물 있음)"
   }
  },
  "notes": [
@@ -415,15 +425,5 @@
   "goal straight-line: 10·31 직선 흔들림 이미 작음, 61·161 분석 때 다시",
   "goal minimal-reverse: 개발 맵에 후진이 없어 기준으로 판단 불가, 61 기반 시험 필요"
  ],
- "stopped": {
-  "when": "2026-11-28 17:27",
-  "reason": "연속 6사이클 채택 없음 (멈춤 조건)",
-  "at": "사이클 9 끝, 다음 대기열 off use_schumacher",
-  "next": [
-   "161 건강 점검",
-   "기준 재측정 10·31 각 3번",
-   "남은 전략 끄기",
-   "미룬 항목"
-  ]
- }
+ "user_rule_20261128": "연속 불채택으로 멈추지 않음. 1위 기록을 넘거나 사용자가 멈출 때(tune/STOP)까지 계속. push 안 함"
 }

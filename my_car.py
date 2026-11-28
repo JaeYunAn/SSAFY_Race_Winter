@@ -191,6 +191,7 @@ class Config:
     grip_scale_clear: Optional[float] = None  # 이번 주행에서 장애물·다른 차를 한 번도 못 봤을 때의 그립 배율 (None = grip_scale)
     grip_near_pre: float = 40.0         # 장애물 앞 이 거리부터 (m)
     grip_near_post: float = 15.0        # 장애물 뒤 이 거리까지 (m)
+    grip_near_range: float = 999.0      # 이 거리(m)보다 먼 장애물은 근처 그립 구간에 쓰지 않음 (센서 범위 끝 깜빡임 방지)
     use_alberto: bool = True            # 알베르토: 출발 직후 조향 위빙 (sysid_weave)
     use_verstappen: bool = True         # 베르스타펜: 제동 학습 + 타원 마찰원 트레일 브레이킹. False 면 제동값 고정·원 마찰원
     use_hamilton: bool = True           # 해밀턴: 10 m 구간별 그립 지도. False 면 모든 구간 1.0
@@ -1263,8 +1264,6 @@ class RaceBrain:
         self.logger = FrameLogger(c.log_path) if c.log_path else None
         self.last_col_t = -9.0
         self.last_save = 0.0
-        if not hasattr(self, "phantoms"):
-            self.phantoms: List[Tuple[float, float]] = []
 
     # ---------------- 메모리 ----------------
     @staticmethod
@@ -1320,7 +1319,6 @@ class RaceBrain:
         self.best_lap = m.get("best_lap")
         if m.get("grip"):
             self.grip.from_dict(m["grip"])
-        self.phantoms = [(float(a), float(b)) for a, b in m.get("phantoms", [])]
 
     def memory_dict(self) -> Dict[str, Any]:
         return {
@@ -1330,7 +1328,6 @@ class RaceBrain:
             "ghost": {str(k): round(v, 3) for k, v in self.ghost.items()} if self.ghost else None,
             "grip": self.grip.to_dict(),
             "steer": self.steer_gain.to_dict(), "decel": self.decel.to_dict(), "auto_sign": self.auto_sign,
-            "phantoms": [[round(a, 1), round(b, 2)] for a, b in self.phantoms],
             "gap_dv": round(self.gap_dv, 3), "brake_cap": round(self.brake_cap, 3), "lag_best": self.lag_best,
         }
 
@@ -1366,7 +1363,6 @@ class RaceBrain:
             return
         self.lap_len = lap_len
         self.grip.set_lap(lap_len)
-        self.phantoms = [(a % lap_len, b) for a, b in self.phantoms]
         t_cross = None
         for i in range(1, len(self.s_hist)):
             (t0, s0), (t1, s1) = self.s_hist[i - 1], self.s_hist[i]
@@ -1519,13 +1515,8 @@ class RaceBrain:
             if self.logger:
                 self.logger.flush()
 
-        # 기억해 둔 '보이지 않는 장애물'을 장애물 목록에 추가
-        for ps, pn in self.phantoms:
-            d = ps - s_key
-            if self.lap_len:
-                d = (d + 0.5 * self.lap_len) % self.lap_len - 0.5 * self.lap_len
-            if -5.0 < d < 200.0:
-                fr.obstacles.append((d, pn))
+        # (2026-11-28 사용자 지시로 삭제) 부딪힌 자리를 '보이지 않는 장애물'로 기억해 다음 바퀴에 피하던 기능.
+        #  장애물 위치를 기억해 쓰는 것은 하드코딩과 같음 → 장애물은 그 순간 센서에 보이는 것만으로 판단
         if fr.collided:
             self.last_col_t = self.t
 
@@ -1593,6 +1584,10 @@ class RaceBrain:
         if c.grip_scale_near is not None:
             for d in [o[0] for o in fr.obstacles] + [o[0] for o in fr.opponents]:
                 if d + c.grip_near_post < 0.0:
+                    continue
+                if d > c.grip_near_range:
+                    # 센서 범위 끝(약 130 m)의 장애물은 보였다 안 보였다 해서 구간이 켜졌다 꺼졌다 → 한계 속도가 흔들려
+                    #  고속에서 브레이크가 튐 (2026-11-28 Map 31). 안정적으로 보이는 거리 안의 장애물만 씀 (기억은 쓰지 않음)
                     continue
                 k0 = max(0, int((d - c.grip_near_pre) / c.plan_ds))
                 k1 = min(N - 1, int((d + c.grip_near_post) / c.plan_ds) + 1)
@@ -2138,15 +2133,8 @@ class RaceBrain:
                 self._enter(self.REVERSE)
                 self.crashes += 1
                 self.lap_crashes += 1
-                self.grip.cut(self.s_key, self.grip.get(self.s_key) * 0.88, 5, 3)
-                # 앞에 알려진 장애물·차가 없는데 막혔다 → 보이지 않는 장애물로 기억해서 다음엔 피함
-                known = any(-2.0 < d < 8.0 and abs(m - fr.n) < 3.0 for d, m in fr.obstacles)
-                known = known or any(-3.0 < d < 8.0 and abs(m - fr.n) < 3.0 for d, m, _ in fr.opponents)
-                wall = abs(fr.n) > fr.half - 1.0
-                if fr.collided and not known and not wall and fr.moving_forward:
-                    ps = self.s_key + 0.5 * self.cfg.car_length + 1.0
-                    if all(self._sdist(ps, a) > 5.0 or abs(fr.n - b) > 2.0 for a, b in self.phantoms):
-                        self.phantoms.append((ps, fr.n))
+                # (2026-11-28 사용자 지시로 삭제) 사고 자리 그립을 12% 깎아 다음 바퀴에 그 자리에서 느리게 가던 것,
+                #  센서에 없는 것에 막힌 자리를 '보이지 않는 장애물'로 기억하던 것 → 둘 다 사고(대개 장애물) 위치를 기억해 쓰는 것
             elif self.wrong_t > 0.5:
                 # 역주행: 넓은 쪽으로 크게 돌아 U턴 (7기 팀 방식: 오른쪽에 있으면 오른쪽으로 꺾음)
                 self.wrong_t = 0.0

@@ -1,8 +1,138 @@
 {
- "phase": "baseline",
+ "phase": "loop",
  "cycle": 0,
- "baseline": {},
- "initial_baseline": {},
+ "baseline": {
+  "10": {
+   "n": 3,
+   "times": [
+    90.26,
+    89.73,
+    90.2
+   ],
+   "all_finished": true,
+   "mean": 90.063,
+   "col": 0.33,
+   "crash": 0.0,
+   "pen": 0.0,
+   "reset": 0.0,
+   "errors": 0,
+   "fails": [],
+   "noise": 0.53
+  },
+  "31": {
+   "n": 3,
+   "times": [
+    141.7,
+    149.03,
+    140.03
+   ],
+   "all_finished": true,
+   "mean": 143.587,
+   "col": 0.67,
+   "crash": 0.33,
+   "pen": 3.33,
+   "reset": 0.0,
+   "errors": 0,
+   "fails": [],
+   "noise": 9.0
+  },
+  "61": {
+   "n": 1,
+   "times": [
+    225.9
+   ],
+   "all_finished": true,
+   "mean": 225.9,
+   "col": 3.0,
+   "crash": 1.0,
+   "pen": 19.0,
+   "reset": 0.0,
+   "errors": 0,
+   "fails": [],
+   "noise": 14.159
+  },
+  "161": {
+   "n": 1,
+   "times": [
+    153.13
+   ],
+   "all_finished": true,
+   "mean": 153.13,
+   "col": 0.0,
+   "crash": 0.0,
+   "pen": 9.0,
+   "reset": 0.0,
+   "errors": 0,
+   "fails": [],
+   "noise": 9.598
+  }
+ },
+ "initial_baseline": {
+  "10": {
+   "n": 3,
+   "times": [
+    90.26,
+    89.73,
+    90.2
+   ],
+   "all_finished": true,
+   "mean": 90.063,
+   "col": 0.33,
+   "crash": 0.0,
+   "pen": 0.0,
+   "reset": 0.0,
+   "errors": 0,
+   "fails": [],
+   "noise": 0.53
+  },
+  "31": {
+   "n": 3,
+   "times": [
+    141.7,
+    149.03,
+    140.03
+   ],
+   "all_finished": true,
+   "mean": 143.587,
+   "col": 0.67,
+   "crash": 0.33,
+   "pen": 3.33,
+   "reset": 0.0,
+   "errors": 0,
+   "fails": [],
+   "noise": 9.0
+  },
+  "61": {
+   "n": 1,
+   "times": [
+    225.9
+   ],
+   "all_finished": true,
+   "mean": 225.9,
+   "col": 3.0,
+   "crash": 1.0,
+   "pen": 19.0,
+   "reset": 0.0,
+   "errors": 0,
+   "fails": [],
+   "noise": 14.159
+  },
+  "161": {
+   "n": 1,
+   "times": [
+    153.13
+   ],
+   "all_finished": true,
+   "mean": 153.13,
+   "col": 0.0,
+   "crash": 0.0,
+   "pen": 9.0,
+   "reset": 0.0,
+   "errors": 0,
+   "fails": [],
+   "noise": 9.598
+  }
+ },
  "queue": [
   "grip_scale 0.90",
   "grip_scale 0.95",

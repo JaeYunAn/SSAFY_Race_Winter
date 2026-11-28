@@ -4,9 +4,22 @@
  "baseline": {},
  "initial_baseline": {},
  "queue": [
-  "grip_scale 0.90", "grip_scale 0.95", "grip_scale 1.00", "grip_scale 1.05", "grip_scale 1.10", "grip_scale 1.15",
-  "off use_senna", "off use_schumacher", "off use_alberto", "off use_hamilton", "off use_verstappen",
-  "off use_moon", "off use_vettel_manage (battle)", "off use_calm (battle)"
+  "grip_scale 0.90",
+  "grip_scale 0.95",
+  "grip_scale 1.00",
+  "grip_scale 1.05",
+  "grip_scale 1.10",
+  "grip_scale 1.15",
+  "goal straight-line (직선 일자 주행: 직선 wob·방향 오차 줄이기)",
+  "goal minimal-reverse (충돌 뒤 최소 후진 탈출: 충돌 한 번당 잃은 시간 줄이기)",
+  "off use_senna",
+  "off use_schumacher",
+  "off use_alberto",
+  "off use_hamilton",
+  "off use_verstappen",
+  "off use_moon",
+  "off use_vettel_manage (battle)",
+  "off use_calm (battle)"
  ],
  "queue_pos": 0,
  "no_adopt_streak": 0,
@@ -14,5 +27,10 @@
  "adopted_since_161": 0,
  "check161": [],
  "sim_fail_streak": 0,
- "disabled_strategies": []
+ "disabled_strategies": [],
+ "user_goals": [
+  "직선은 작대기처럼 일자로",
+  "부딪히면 최소한의 후진으로 피해서 탈출",
+  "미끄러짐을 이용해 감속 없이 코너 (그립 배율 실험으로 먼저 검증)"
+ ]
 }

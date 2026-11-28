@@ -171,8 +171,14 @@ class Config:
     verbose: bool = True                # 랩이 끝날 때 한 줄 요약 출력
 
     # 실험 스위치 (자동 개선 반복용. 로컬에서 SSAFY_TUNE=<json> 으로 덮어씀. 기본값 = 지금까지의 동작)
-    grip_scale: float = 1.0             # 속도 계획에 쓰는 그립(mu)에 곱하는 배율
+    grip_scale: float = 1.30            # 속도 계획에 쓰는 그립(mu)·조향 곡률 상한에 곱하는 배율 (2026-11-28 채택, 1.0 → 1.30)
     learn_grip: bool = True             # False: 옆 그립·제동·구간 그립 학습을 멈추고 불러온 값 그대로 씀
+    # 장애물·상대 차 근처 구간에만 쓰는 그립 배율 (None = 어디서나 grip_scale).
+    #  2026-11-28 사이클 1: grip_scale 1.30 은 10·31 에서 크게 빨라졌지만 장애물 많은 61 에서 회피 중 충돌 3 → 9건
+    #  → 근처만 1.0 으로: 10 −6.75, 31 −8.87, 61 −0.13초, 61 충돌 3 → 2, 벌점 19 → 11.5 (채택)
+    grip_scale_near: Optional[float] = 1.0
+    grip_near_pre: float = 40.0         # 장애물 앞 이 거리부터 (m)
+    grip_near_post: float = 15.0        # 장애물 뒤 이 거리까지 (m)
     use_alberto: bool = True            # 알베르토: 출발 직후 조향 위빙 (sysid_weave)
     use_verstappen: bool = True         # 베르스타펜: 제동 학습 + 타원 마찰원 트레일 브레이킹. False 면 제동값 고정·원 마찰원
     use_hamilton: bool = True           # 해밀턴: 10 m 구간별 그립 지도. False 면 모든 구간 1.0
@@ -1165,6 +1171,7 @@ class RaceBrain:
         self.ld_f: Optional[float] = None                        # 조향 목표점까지 거리 (직선 모드에서 길어짐)
         self.straight_w = 0.0
         self.straight_on = False                                  # 직선 모드가 켜져 있는지 (켜고 끄는 문턱이 다름)
+        self.gs0 = c.grip_scale                               # 지금 자리의 그립 배율 (조향 곡률 상한에 씀)
         self.psi_rate = 0.0
         self.slip_frames = 0
         self.grow_frames = 0
@@ -1555,7 +1562,17 @@ class RaceBrain:
         anchor_ok = fr.moving_forward and not fr.teleport and self.t - self.last_recover_t > 1.5
         plan = self.planner.plan(fr, geo, self.travel, self.t_list, anchor_ok)
         N = int(c.profile_length / c.plan_ds) + 1
-        mu = [self.a_lat * self.grip.get(self._s_ahead(k * c.plan_ds)) * self.factor * c.grip_scale for k in range(N)]
+        gs = [c.grip_scale] * N
+        if c.grip_scale_near is not None:
+            for d in [o[0] for o in fr.obstacles] + [o[0] for o in fr.opponents]:
+                if d + c.grip_near_post < 0.0:
+                    continue
+                k0 = max(0, int((d - c.grip_near_pre) / c.plan_ds))
+                k1 = min(N - 1, int((d + c.grip_near_post) / c.plan_ds) + 1)
+                for k in range(k0, k1 + 1):
+                    gs[k] = c.grip_scale_near
+        self.gs0 = gs[0]
+        mu = [self.a_lat * self.grip.get(self._s_ahead(k * c.plan_ds)) * self.factor * gs[k] for k in range(N)]
         vcap = c.max_speed_kmh / 3.6
         # 제동 방향 그립 (타원 마찰원): 실측 제동+옆 가속 합이 약 13~14 로 옆 그립(약 11)보다 큼 (2026-11-25 Map 10).
         #  계획은 실제로 낸 최대 제동(brake_cap)보다 3%만 더 씀 → 낼 수 있으면 다음에 조금 더, 포화되면 그 값에 멈춤
@@ -1660,7 +1677,7 @@ class RaceBrain:
         k_ff = lerp_list(plan.d, plan.kappa, min(v * 0.15, plan.d[-1]))
         self.kappa_des = 0.7 * k_pp + 0.3 * k_ff
         # 그립 한계 이상으로 조향하지 않음: 앞바퀴가 미끄러지면 브레이크까지 안 듣게 되므로
-        k_lim = 1.08 * self.a_lat * self.grip.get(self.s_key) * c.grip_scale / max(v * v, 1.0)
+        k_lim = 1.08 * self.a_lat * self.grip.get(self.s_key) * self.gs0 / max(v * v, 1.0)
         grip_capped = abs(self.kappa_des) > k_lim
         self.kappa_des = clamp(self.kappa_des, -k_lim, k_lim)
         self.kdes_sent.append((self.t, self.kappa_des, dt))   # 조향 지연 예측용 기록

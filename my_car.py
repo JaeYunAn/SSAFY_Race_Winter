@@ -191,7 +191,9 @@ class Config:
     grip_scale_clear: Optional[float] = None  # 이번 주행에서 장애물·다른 차를 한 번도 못 봤을 때의 그립 배율 (None = grip_scale)
     grip_near_pre: float = 40.0         # 장애물 앞 이 거리부터 (m)
     grip_near_post: float = 15.0        # 장애물 뒤 이 거리까지 (m)
-    grip_near_range: float = 999.0      # 이 거리(m)보다 먼 장애물은 근처 그립 구간에 쓰지 않음 (센서 범위 끝 깜빡임 방지)
+    bump_avoid: bool = True             # 센서에 없는 것에 부딪히면 그 자리를 지나갈 때까지만 비켜 감 (다음 바퀴에는 안 씀)
+    bump_hold_t: float = 20.0           # 비켜 갈 자리를 유지하는 최대 시간 (초)
+    grip_near_range: float = 999.0     # 이 거리(m)보다 먼 장애물은 근처 그립 구간에 쓰지 않음 (센서 범위 끝 깜빡임 방지)
     use_alberto: bool = True            # 알베르토: 출발 직후 조향 위빙 (sysid_weave)
     use_verstappen: bool = True         # 베르스타펜: 제동 학습 + 타원 마찰원 트레일 브레이킹. False 면 제동값 고정·원 마찰원
     use_hamilton: bool = True           # 해밀턴: 10 m 구간별 그립 지도. False 면 모든 구간 1.0
@@ -1193,7 +1195,8 @@ class RaceBrain:
         self.straight_w = 0.0
         self.straight_on = False                                  # 직선 모드가 켜져 있는지 (켜고 끄는 문턱이 다름)
         self.gs0 = c.grip_scale                               # 지금 자리의 그립 배율 (조향 곡률 상한에 씀)
-        self.traffic_seen = False                            # 이번 주행에서 장애물·다른 차를 한 번이라도 봤는지 (센서)
+        self.bumps: List[Tuple[float, float, float]] = []      # 충돌 직후 비켜 갈 자리 (누적 주행 거리, 옆 n, 시각) — 지나가면 지움
+        self.traffic_seen = False                           # 이번 주행에서 장애물·다른 차를 한 번이라도 봤는지 (센서)
         self.psi_rate = 0.0
         self.slip_frames = 0
         self.grow_frames = 0
@@ -1517,6 +1520,14 @@ class RaceBrain:
 
         # (2026-11-28 사용자 지시로 삭제) 부딪힌 자리를 '보이지 않는 장애물'로 기억해 다음 바퀴에 피하던 기능.
         #  장애물 위치를 기억해 쓰는 것은 하드코딩과 같음 → 장애물은 그 순간 센서에 보이는 것만으로 판단
+        # 충돌 직후 비켜 가기: 방금 막힌 자리는 지나갈 때까지만 장애물로 둠 (아래 _recovery 참고)
+        if fr.teleport:
+            self.bumps = []
+        self.bumps = [b for b in self.bumps if self.t - b[2] < c.bump_hold_t and b[0] - fr.s > -5.0]
+        for sb, nb, _ in self.bumps:
+            d = sb - fr.s
+            if -5.0 < d < 200.0:
+                fr.obstacles.append((d, nb))
         if fr.collided:
             self.last_col_t = self.t
 
@@ -2135,6 +2146,14 @@ class RaceBrain:
                 self.lap_crashes += 1
                 # (2026-11-28 사용자 지시로 삭제) 사고 자리 그립을 12% 깎아 다음 바퀴에 그 자리에서 느리게 가던 것,
                 #  센서에 없는 것에 막힌 자리를 '보이지 않는 장애물'로 기억하던 것 → 둘 다 사고(대개 장애물) 위치를 기억해 쓰는 것
+                # 충돌 직후 비켜 가기 (사용자 승인 2026-11-28): 대회 API 는 경유점 선 위에 정확히 놓인 장애물을 목록에서 빠뜨림.
+                #  충돌 센서가 켜졌는데 앞에 알려진 장애물·차·벽이 없으면 바로 앞을 막힌 것으로 보고, 후진 뒤 그 자리를
+                #  지나갈 때까지만(최대 bump_hold_t 초) 피함. 지나가면 잊고 다음 바퀴에는 쓰지 않음 (누적 주행 거리 기준, 파일 저장 없음)
+                known = any(-2.0 < d < 8.0 and abs(m - fr.n) < 3.0 for d, m in fr.obstacles)
+                known = known or any(-3.0 < d < 8.0 and abs(m - fr.n) < 3.0 for d, m, _ in fr.opponents)
+                wall = abs(fr.n) > fr.half - 1.0
+                if self.cfg.bump_avoid and fr.collided and not known and not wall and fr.moving_forward:
+                    self.bumps.append((fr.s + 0.5 * self.cfg.car_length + 1.0, fr.n, self.t))
             elif self.wrong_t > 0.5:
                 # 역주행: 넓은 쪽으로 크게 돌아 U턴 (7기 팀 방식: 오른쪽에 있으면 오른쪽으로 꺾음)
                 self.wrong_t = 0.0
